@@ -1,0 +1,151 @@
+:root {
+    /* Define spacing variables */
+    --spacer-xs: 8px;
+    --spacer-sm: 16px;
+    --spacer-md: 24px;
+    --spacer-lg: 32px;
+    --spacer-xl: 48px;
+
+    --surface: #FFFCF8;
+    --primary: #666666;
+    --primary-shade: #444444;
+    --text-heading: #333333;
+    --text-body: #555555;
+
+}
+
+/* anchor reset */
+a {
+    text-decoration: none;
+    /* Remove underline */
+    color: inherit;
+    /* Set color to inherit from parent */
+    outline: none;
+    /* Remove default focus outline */
+}
+
+
+body {
+    background-color: var(--surface);
+}
+
+main {
+    max-width: 1000px;
+    margin: auto;
+    padding: var(--spacer-lg);
+}
+
+/* Heading 1 */
+h1 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 36px;
+    font-weight: bold;
+    color: var(--text-heading);
+}
+
+/* Heading 2 */
+h2 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 30px;
+    font-weight: bold;
+    color: var(--text-heading);
+}
+
+/* Heading 3 */
+h3 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 24px;
+    font-weight: bold;
+    color: var(--text-heading);
+}
+
+/* Paragraph */
+p {
+    font-family: 'Work Sans', sans-serif;
+    font-size: 16px;
+    font-weight: 400;
+    color: var(--text-body);
+}
+
+.key-value span {
+    font-weight: bold;
+    margin-inline-end: var(--spacer-xs);
+}
+
+hr .divider {
+    margin: 0; /* Remove default margin */
+    padding: 0; /* Remove default padding */
+    border: none; /* Remove default border */
+    height: .5px; /* Set a default height */
+    background-color: var(--text-body); /* Set a default background color */
+}
+
+/* Button */
+.button {
+    font-family: 'Work Sans', sans-serif;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-body);
+
+    display: inline-block;
+    padding: var(--spacer-xs) var(--spacer-sm);
+    border: .5px solid var(--text-body);
+    cursor: pointer;
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.button:hover {
+    color: var(--surface);
+    background-color: var(--text-body);
+}
+
+/* Card */
+.card {
+    padding: var(--spacer-sm);
+    border: .5px solid var(--text-body);
+}
+
+.intro {
+    display: grid;
+    gap: 0 var(--spacer-lg);
+    grid-template-columns: 2fr minmax(350px, 1fr);
+}
+
+.intro .about {
+    grid-column: 1/2;
+}
+
+.tenant {
+    display: grid;
+    gap: 0 var(--spacer-lg);
+    grid-template-columns: 3fr 1fr;
+}
+
+.tenant img {
+    grid-column: 2/3;
+    grid-row: 1/3;
+}
+
+.floor-details {
+    display: grid;
+    gap: 0 var(--spacer-lg);
+    grid-template-areas: "hero hero" 
+                         "about image"
+                         "cta image";
+}
+
+.floor-hero {
+    grid-area: hero;
+}
+
+.floor-about {
+    grid-area: about;
+}
+
+.floor-cta {
+    grid-area: cta;
+}
+
+.floor-level {
+    grid-area: image;
+}
