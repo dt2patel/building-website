@@ -39,7 +39,7 @@ main {
 h1 {
     font-family: 'Cormorant Garamond', serif;
     font-size: 36px;
-    font-weight: bold;
+    font-weight: 400;
     color: var(--text-heading);
 }
 
@@ -72,12 +72,31 @@ p {
     margin-inline-end: var(--spacer-xs);
 }
 
-hr .divider {
+.divider {
     margin: 0; /* Remove default margin */
     padding: 0; /* Remove default padding */
     border: none; /* Remove default border */
     height: .5px; /* Set a default height */
     background-color: var(--text-body); /* Set a default background color */
+    color: var(--text-body);
+    position: relative;
+    overflow: visible;
+    margin: var(--spacer-md) 0;
+}
+
+.divider::after, .divider::before {
+    content:"";
+    display: inline;
+    width: 8px;
+    height: 8px;
+    background-color: var(--text-body);
+    border-radius: 4px;
+    position: absolute;
+    top: -4px;
+}
+
+.divider::after {
+    right: 0px;
 }
 
 /* Button */
@@ -105,6 +124,11 @@ hr .divider {
     border: .5px solid var(--text-body);
 }
 
+.hero {
+    height: 40vh;
+    width: 100%;
+}
+
 .intro {
     display: grid;
     gap: 0 var(--spacer-lg);
@@ -115,10 +139,14 @@ hr .divider {
     grid-column: 1/2;
 }
 
+.intro h1 {
+    font-size: 64px;
+}
+
 .tenant {
     display: grid;
     gap: 0 var(--spacer-lg);
-    grid-template-columns: 3fr 1fr;
+    grid-template-columns: 3fr minmax(100px, 1fr);
 }
 
 .tenant img {
@@ -136,6 +164,8 @@ hr .divider {
 
 .floor-hero {
     grid-area: hero;
+    height: 300px;
+    width: 100%;
 }
 
 .floor-about {
