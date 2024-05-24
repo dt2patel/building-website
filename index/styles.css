@@ -120,6 +120,7 @@ p {
 
 /* Card */
 .card {
+    align-self: start;
     padding: var(--spacer-sm);
     border: .5px solid var(--text-body);
 }
@@ -178,4 +179,27 @@ p {
 
 .floor-level {
     grid-area: image;
+}
+
+@media (max-width: 768px) {
+    .intro {
+        display: block;
+    }
+
+    .tenant {
+        display: inline;
+        margin-bottom: var(--spacer-md);
+    }
+
+    .tenant img {
+        float: right;
+    }
+
+    .floor-details {
+        grid-template-areas: "hero"
+                             "about"
+                             "image"
+                             "cta"
+
+    }
 }
