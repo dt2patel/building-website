@@ -24,6 +24,11 @@ a {
     /* Remove default focus outline */
 }
 
+a p {
+    text-decoration: underline;
+    margin-top: -10px;
+}
+
 
 body {
     background-color: var(--surface);
@@ -195,7 +200,7 @@ p, figure {
 .floor-hero figure {
     height: 100%;
     text-align: center;
-    transition: all .3ms ease;
+    transition: all .3s ease;
 }
 
 .floor-hero figure:hover {
