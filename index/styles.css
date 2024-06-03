@@ -215,6 +215,17 @@ figure img {
 
 .floor-about {
     grid-area: about;
+    display: flex;
+    
+    gap: var(--spacer-md);
+}
+
+.floor-about .card {
+    flex: 1;
+}
+
+.floor-about p {
+    flex: 2;
 }
 
 .floor-cta {
