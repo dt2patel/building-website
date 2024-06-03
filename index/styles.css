@@ -232,6 +232,8 @@ figure img {
 
     .tenant img {
         float: right;
+        width: 50px;
+        padding: var(--spacer-sm);
     }
 
     .floor-details {
@@ -240,5 +242,9 @@ figure img {
                              "image"
                              "cta"
 
+    }
+
+    .hero, .floor-hero {
+        display: none;
     }
 }
