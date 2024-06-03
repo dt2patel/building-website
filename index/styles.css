@@ -225,7 +225,7 @@ figure img {
 }
 
 .floor-about p {
-    flex: 2;
+    flex: 1;
 }
 
 .floor-cta {
@@ -250,6 +250,14 @@ figure img {
         float: right;
         width: 50px;
         padding: var(--spacer-sm);
+    }
+    
+    .floor-about {
+        display: block;
+    }
+
+    .floor-cta {
+        margin-top: var(--spacer-md);
     }
 
     .floor-details {
