@@ -216,7 +216,7 @@ figure img {
 .floor-about {
     grid-area: about;
     display: flex;
-    
+    margin-top: 50px;
     gap: var(--spacer-md);
 }
 
