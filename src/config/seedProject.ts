@@ -376,7 +376,7 @@ export function createSeedProject(): Project {
   return {
     schemaVersion: 2,
     id: 'eklavya-blueprint-lab',
-    name: 'Eklavya Blueprint Lab',
+    name: 'Eklavya',
     units: 'm',
     gridUnit: 'm',
     gridSpacing: 1,

@@ -1,63 +1,54 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { createSeedProject } from '../config/seedProject'
 import { exportFloorPdf } from '../lib/export'
+import {
+  createDefaultEntityStyle,
+  entityLabel,
+  timestamp,
+} from '../lib/plannerModel'
 import { cloneJson, fromDisplayValue } from '../lib/geometry'
+import { useAuthStore } from './authStore'
 import { isFirebaseConfigured } from '../services/firebase'
 import {
-  loadProject,
-  saveProject,
-  subscribeToProject,
+  archiveSave,
+  cacheProjectStateLocally,
+  createSaveFromSource,
+  loadProjectMeta,
+  loadSave,
+  loadSaves,
+  saveActiveProjectState,
+  setLastOpenedSave,
   uploadExport,
 } from '../services/plannerRepository'
 import {
-  layerColors,
   layerOrder,
   type GridPoint,
   type LayerType,
   type MeasurementUnit,
   type PlanEntity,
   type Project,
+  type ProjectMeta,
+  type ProjectSaveSummary,
   type SyncState,
   type Template,
   type ToolMode,
 } from '../types/planner'
 
-function slugify(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '')
-}
-
-function timestamp() {
-  return new Date().toISOString()
-}
-
-function parseTimestamp(value: string | undefined): number {
-  if (!value) {
-    return Number.NEGATIVE_INFINITY
-  }
-
-  const parsed = Date.parse(value)
-  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed
-}
-
-function entityLabel(layerType: LayerType, geometryType: PlanEntity['geometryType'], count: number) {
-  return `${layerType} ${geometryType} ${count}`
-}
-
-function projectsMatch(left: Project, right: Project): boolean {
-  return JSON.stringify(left) === JSON.stringify(right)
-}
-
 export const usePlannerStore = defineStore('planner', () => {
+  const auth = useAuthStore()
   const firebaseEnabled = isFirebaseConfigured()
-  const project = ref<Project>(createSeedProject())
-  const selectedFloorId = ref(project.value.floors[0]?.id ?? '')
+  const project = ref<Project | null>(null)
+  const projectMeta = ref<ProjectMeta | null>(null)
+  const activeSaveId = ref('')
+  const availableSaves = ref<ProjectSaveSummary[]>([])
+  const archivedSaves = ref<ProjectSaveSummary[]>([])
+  const selectedFloorId = ref('')
   const activeLayerType = ref<LayerType>('perimeter')
   const selectedEntityId = ref<string | null>(null)
   const toolMode = ref<ToolMode>('select')
   const draftVertices = ref<GridPoint[]>([])
   const syncState = ref<SyncState>('local')
-  const statusMessage = ref('Connect to a live Firestore session to edit')
+  const statusMessage = ref('Select a project save to start editing')
   const initialized = ref(false)
   const layerVisibility = ref<Record<LayerType, boolean>>({
     perimeter: true,
@@ -67,16 +58,16 @@ export const usePlannerStore = defineStore('planner', () => {
     electrical: true,
     custom: true,
   })
+  const editableMembership = ref(false)
 
   let saveTimer: number | undefined
-  let stopProjectSubscription: (() => void) | undefined
   const liveConnectionVerified = ref(false)
-  const hasPendingWrites = ref(false)
-  const remoteProjectExists = ref(false)
   const lastSyncedProject = ref<Project | null>(null)
+  const currentProjectId = ref('')
+  const currentContextKey = ref('')
 
   const selectedFloor = computed(
-    () => project.value.floors.find((floor) => floor.id === selectedFloorId.value) ?? project.value.floors[0],
+    () => project.value?.floors.find((floor) => floor.id === selectedFloorId.value) ?? project.value?.floors[0],
   )
 
   const currentTemplateId = computed(
@@ -85,7 +76,7 @@ export const usePlannerStore = defineStore('planner', () => {
 
   const currentTemplate = computed(
     () =>
-      project.value.templates.find((template) => template.id === currentTemplateId.value) ?? null,
+      project.value?.templates.find((template) => template.id === currentTemplateId.value) ?? null,
   )
 
   const selectedEntity = computed(
@@ -95,7 +86,7 @@ export const usePlannerStore = defineStore('planner', () => {
   const templatesByLayer = computed(() =>
     layerOrder.reduce(
       (accumulator, layerType) => {
-        accumulator[layerType] = project.value.templates.filter((template) => template.layerType === layerType)
+        accumulator[layerType] = (project.value?.templates ?? []).filter((template) => template.layerType === layerType)
         return accumulator
       },
       {} as Record<LayerType, Template[]>,
@@ -104,7 +95,7 @@ export const usePlannerStore = defineStore('planner', () => {
 
   const visibleTemplates = computed(() => {
     const floor = selectedFloor.value
-    if (!floor) {
+    if (!floor || !project.value) {
       return []
     }
 
@@ -112,109 +103,52 @@ export const usePlannerStore = defineStore('planner', () => {
       .filter((layerType) => layerVisibility.value[layerType])
       .map((layerType) => floor.templateAssignments[layerType])
       .filter((templateId): templateId is string => Boolean(templateId))
-      .map((templateId) => project.value.templates.find((template) => template.id === templateId))
+      .map((templateId) => project.value?.templates.find((template) => template.id === templateId))
       .filter((template): template is Template => Boolean(template))
   })
 
-  const canEdit = computed(() => firebaseEnabled && liveConnectionVerified.value)
+  const canEdit = computed(() => editableMembership.value && firebaseEnabled)
 
-  function lockEditingStatus(message: string) {
-    liveConnectionVerified.value = false
-    hasPendingWrites.value = false
-    syncState.value = firebaseEnabled ? 'error' : 'local'
-    statusMessage.value = message
+  function clearEditorSelection() {
+    selectedEntityId.value = null
     draftVertices.value = []
     toolMode.value = 'select'
   }
 
-  function applyProjectSnapshot(nextProject: Project) {
-    const currentUpdatedAt = parseTimestamp(project.value.updatedAt)
-    const nextUpdatedAt = parseTimestamp(nextProject.updatedAt)
-    const hasLocalEdits = lastSyncedProject.value
-      ? !projectsMatch(project.value, lastSyncedProject.value)
-      : false
-
-    if (nextUpdatedAt < currentUpdatedAt) {
-      return
-    }
-
-    if (
-      hasLocalEdits &&
-      nextUpdatedAt === currentUpdatedAt &&
-      !projectsMatch(nextProject, project.value)
-    ) {
-      return
-    }
-
-    const nextSelectedFloorId = nextProject.floors.some((floor) => floor.id === selectedFloorId.value)
-      ? selectedFloorId.value
-      : nextProject.floors[0]?.id ?? ''
-
-    const entityStillExists = nextProject.templates.some((template) =>
-      template.entities.some((entity) => entity.id === selectedEntityId.value),
-    )
-
-    project.value = nextProject
-    selectedFloorId.value = nextSelectedFloorId
-    lastSyncedProject.value = cloneJson(nextProject)
-
-    if (!entityStillExists) {
-      selectedEntityId.value = null
-    }
+  function lockEditingStatus(message: string) {
+    liveConnectionVerified.value = false
+    syncState.value = firebaseEnabled ? 'error' : 'local'
+    statusMessage.value = message
+    clearEditorSelection()
   }
 
-  function updateRealtimeState(state: { exists: boolean; hasPendingWrites: boolean; live: boolean }) {
-    hasPendingWrites.value = state.hasPendingWrites
-    liveConnectionVerified.value = state.live
-    remoteProjectExists.value = state.exists
-
-    if (!firebaseEnabled) {
-      syncState.value = 'local'
-      statusMessage.value = 'Connect to a live Firestore session to edit'
+  async function refreshSaveLists() {
+    if (!currentProjectId.value) {
+      availableSaves.value = []
+      archivedSaves.value = []
       return
     }
 
-    if (!state.live) {
-      lockEditingStatus('Read-only until a live Firestore connection is restored')
-      return
-    }
+    const [active, archived, meta] = await Promise.all([
+      loadSaves(currentProjectId.value, { archived: false }),
+      loadSaves(currentProjectId.value, { archived: true }),
+      loadProjectMeta(currentProjectId.value),
+    ])
 
-    syncState.value = state.hasPendingWrites ? 'syncing' : 'synced'
-    statusMessage.value = state.hasPendingWrites
-      ? 'Syncing live changes to Firebase...'
-      : state.exists
-        ? 'Live Firestore session connected'
-        : 'Live Firestore session connected. First edit will create the shared project.'
-  }
-
-  function startRealtimeSync() {
-    stopProjectSubscription?.()
-
-    if (!firebaseEnabled) {
-      lockEditingStatus('Firebase config missing. Editing is locked.')
-      return
-    }
-
-    syncState.value = 'syncing'
-    statusMessage.value = 'Connecting to live Firestore session...'
-
-    stopProjectSubscription = subscribeToProject(project.value.id, {
-      onProject: (nextProject) => {
-        applyProjectSnapshot(nextProject)
-      },
-      onStateChange: (state) => {
-        updateRealtimeState(state)
-      },
-      onError: (error) => {
-        lockEditingStatus(error.message || 'Live Firestore listener failed')
-      },
-    })
+    availableSaves.value = active
+    archivedSaves.value = archived
+    projectMeta.value = meta
   }
 
   function ensureEditableSession() {
+    if (!editableMembership.value) {
+      statusMessage.value = 'You only have view access for this project.'
+      return false
+    }
+
     if (!canEdit.value) {
       statusMessage.value = firebaseEnabled
-        ? 'Read-only until a live Firestore connection is restored'
+        ? 'Editing is unavailable for this project.'
         : 'Firebase config missing. Editing is locked.'
       return false
     }
@@ -222,26 +156,53 @@ export const usePlannerStore = defineStore('planner', () => {
     return true
   }
 
-  async function initialize() {
-    if (initialized.value) {
+  async function initialize(options: {
+    projectId: string
+    saveId: string
+    canEdit: boolean
+  }) {
+    const contextKey = `${options.projectId}:${options.saveId}:${options.canEdit}`
+    if (initialized.value && currentContextKey.value === contextKey) {
       return
     }
 
-    project.value = await loadProject()
+    window.clearTimeout(saveTimer)
+    currentContextKey.value = contextKey
+    currentProjectId.value = options.projectId
+    activeSaveId.value = options.saveId
+    editableMembership.value = options.canEdit
+    clearEditorSelection()
+
+    projectMeta.value = await loadProjectMeta(options.projectId)
+    project.value = await loadSave(options.projectId, options.saveId, auth.currentUid ?? undefined)
     selectedFloorId.value = project.value.floors[0]?.id ?? ''
-    lastSyncedProject.value = null
+    lastSyncedProject.value = cloneJson(project.value)
+    await refreshSaveLists()
+    await setLastOpenedSave(options.projectId, options.saveId)
     initialized.value = true
+
     if (!firebaseEnabled) {
       syncState.value = 'local'
-      statusMessage.value = 'Firebase config missing. Editing is locked.'
+      statusMessage.value = 'Firebase configuration is missing.'
+      liveConnectionVerified.value = false
       return
     }
 
-    startRealtimeSync()
+    liveConnectionVerified.value = true
+    syncState.value = 'synced'
+    statusMessage.value = 'Loaded from Firebase'
   }
 
   function touchProject() {
+    if (!project.value) {
+      return
+    }
+
     project.value.updatedAt = timestamp()
+    cacheProjectStateLocally(project.value, {
+      saveId: activeSaveId.value,
+      userId: auth.currentUid ?? undefined,
+    })
   }
 
   function queueSave() {
@@ -252,6 +213,10 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   async function persist() {
+    if (!project.value) {
+      return
+    }
+
     if (!firebaseEnabled) {
       lockEditingStatus('Firebase config missing. Editing is locked.')
       return
@@ -261,31 +226,72 @@ export const usePlannerStore = defineStore('planner', () => {
     statusMessage.value = 'Syncing live changes to Firebase...'
 
     try {
-      await saveProject(
-        remoteProjectExists.value ? lastSyncedProject.value : null,
+      await saveActiveProjectState(
+        lastSyncedProject.value,
         project.value,
+        {
+          projectId: currentProjectId.value,
+          saveId: activeSaveId.value,
+          userId: auth.currentUid ?? undefined,
+        },
       )
-      syncState.value = hasPendingWrites.value ? 'syncing' : 'synced'
-      statusMessage.value = hasPendingWrites.value
-        ? 'Syncing live changes to Firebase...'
-        : 'Synced to Firebase'
+      lastSyncedProject.value = cloneJson(project.value)
+      liveConnectionVerified.value = true
+      syncState.value = 'synced'
+      statusMessage.value = 'Synced to Firebase'
+      await refreshSaveLists()
     } catch (error) {
       lockEditingStatus(error instanceof Error ? error.message : 'Unable to persist planner state')
     }
   }
 
+  async function createSaveAs(name?: string) {
+    if (!project.value || !auth.currentUid) {
+      return null
+    }
+
+    if (!ensureEditableSession()) {
+      return null
+    }
+
+    await persist()
+    const saveId = await createSaveFromSource({
+      projectId: currentProjectId.value,
+      sourceSaveId: activeSaveId.value,
+      name,
+      creatorUid: auth.currentUid,
+    })
+    await refreshSaveLists()
+    return saveId
+  }
+
+  async function setSaveArchived(saveId: string, archived: boolean) {
+    if (!projectMeta.value) {
+      return null
+    }
+
+    if (!ensureEditableSession()) {
+      return null
+    }
+
+    await archiveSave(currentProjectId.value, saveId, archived)
+    await refreshSaveLists()
+
+    if (archived && saveId === activeSaveId.value && projectMeta.value.defaultSaveId !== saveId) {
+      return projectMeta.value.defaultSaveId
+    }
+
+    return null
+  }
+
   function selectFloor(floorId: string) {
     selectedFloorId.value = floorId
-    selectedEntityId.value = null
-    draftVertices.value = []
-    toolMode.value = 'select'
+    clearEditorSelection()
   }
 
   function setActiveLayer(layerType: LayerType) {
     activeLayerType.value = layerType
-    selectedEntityId.value = null
-    draftVertices.value = []
-    toolMode.value = 'select'
+    clearEditorSelection()
   }
 
   function setToolMode(mode: ToolMode) {
@@ -329,14 +335,12 @@ export const usePlannerStore = defineStore('planner', () => {
     queueSave()
 
     if (layerType === activeLayerType.value) {
-      selectedEntityId.value = null
-      draftVertices.value = []
-      toolMode.value = 'select'
+      clearEditorSelection()
     }
   }
 
   function updateGridSettings(unit: MeasurementUnit, spacing: number) {
-    if (!ensureEditableSession()) {
+    if (!ensureEditableSession() || !project.value) {
       return
     }
 
@@ -352,7 +356,7 @@ export const usePlannerStore = defineStore('planner', () => {
     rawValue: number,
     unit: MeasurementUnit,
   ) {
-    if (!ensureEditableSession()) {
+    if (!ensureEditableSession() || !project.value) {
       return
     }
 
@@ -367,7 +371,7 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function createTemplate() {
-    if (!ensureEditableSession()) {
+    if (!ensureEditableSession() || !project.value) {
       return
     }
 
@@ -375,7 +379,7 @@ export const usePlannerStore = defineStore('planner', () => {
     const nextNumber = templatesByLayer.value[layerType].length + 1
     const name = `${layerType} concept ${nextNumber}`
     const template: Template = {
-      id: `${slugify(name)}-${Date.now()}`,
+      id: `${layerType}-concept-${Date.now()}`,
       name,
       layerType,
       version: 1,
@@ -386,17 +390,12 @@ export const usePlannerStore = defineStore('planner', () => {
 
     project.value.templates.push(template)
     assignTemplate(layerType, template.id)
-
     touchProject()
     queueSave()
   }
 
   function cloneCurrentTemplate() {
-    if (!ensureEditableSession()) {
-      return
-    }
-
-    if (!currentTemplate.value) {
+    if (!ensureEditableSession() || !project.value || !currentTemplate.value) {
       return
     }
 
@@ -404,7 +403,7 @@ export const usePlannerStore = defineStore('planner', () => {
     const clonedName = `${source.name} copy`
     const template: Template = {
       ...source,
-      id: `${slugify(clonedName)}-${Date.now()}`,
+      id: `${source.id}-copy-${Date.now()}`,
       name: clonedName,
       version: source.version + 1,
       status: 'draft',
@@ -422,7 +421,7 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function ensureEditableTemplate() {
-    if (!ensureEditableSession()) {
+    if (!ensureEditableSession() || !project.value) {
       return null
     }
 
@@ -464,12 +463,7 @@ export const usePlannerStore = defineStore('planner', () => {
         description: '',
         symbolKey: 'marker',
         vertices: [point],
-        style: {
-          stroke: layerColors[activeLayerType.value],
-          fill: '#ffffff',
-          strokeWidth: 0.6,
-          opacity: 1,
-        },
+        style: createDefaultEntityStyle(activeLayerType.value, 'point'),
         metadata: {},
       }
 
@@ -504,12 +498,7 @@ export const usePlannerStore = defineStore('planner', () => {
       label: entityLabel(activeLayerType.value, geometryType, entityCount),
       description: '',
       vertices: cloneJson(draftVertices.value),
-      style: {
-        stroke: layerColors[activeLayerType.value],
-        fill: geometryType === 'polygon' ? `${layerColors[activeLayerType.value]}33` : 'none',
-        strokeWidth: 0.8,
-        opacity: 0.95,
-      },
+      style: createDefaultEntityStyle(activeLayerType.value, geometryType),
       metadata: {},
     }
 
@@ -527,30 +516,11 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function updateSelectedEntity(patch: Partial<PlanEntity>) {
-    if (!ensureEditableSession()) {
-      return
-    }
-
-    if (!selectedEntity.value || !currentTemplate.value) {
+    if (!ensureEditableSession() || !selectedEntity.value || !currentTemplate.value) {
       return
     }
 
     Object.assign(selectedEntity.value, patch)
-    currentTemplate.value.updatedAt = timestamp()
-    touchProject()
-    queueSave()
-  }
-
-  function updateSelectedEntityMetadata(key: string, value: string) {
-    if (!ensureEditableSession()) {
-      return
-    }
-
-    if (!selectedEntity.value || !currentTemplate.value) {
-      return
-    }
-
-    selectedEntity.value.metadata[key] = value
     currentTemplate.value.updatedAt = timestamp()
     touchProject()
     queueSave()
@@ -573,17 +543,33 @@ export const usePlannerStore = defineStore('planner', () => {
     queueSave()
   }
 
+  function translateEntity(entityId: string, delta: GridPoint) {
+    if (!ensureEditableSession()) {
+      return
+    }
+
+    const template = visibleTemplates.value.find((item) => item.entities.some((entity) => entity.id === entityId))
+    const entity = template?.entities.find((item) => item.id === entityId)
+    if (!template || !entity) {
+      return
+    }
+
+    entity.vertices = entity.vertices.map((vertex) => ({
+      x: vertex.x + delta.x,
+      y: vertex.y + delta.y,
+    }))
+    template.updatedAt = timestamp()
+    touchProject()
+    queueSave()
+  }
+
   function updateSelectedEntityVertex(
     vertexIndex: number,
     axis: 'x' | 'y',
     rawValue: number,
     unit: MeasurementUnit,
   ) {
-    if (!ensureEditableSession()) {
-      return
-    }
-
-    if (!selectedEntity.value || Number.isNaN(rawValue)) {
+    if (!ensureEditableSession() || !selectedEntity.value || Number.isNaN(rawValue)) {
       return
     }
 
@@ -597,11 +583,7 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function deleteSelectedEntity() {
-    if (!ensureEditableSession()) {
-      return
-    }
-
-    if (!selectedEntity.value || !currentTemplate.value) {
+    if (!ensureEditableSession() || !selectedEntity.value || !currentTemplate.value) {
       return
     }
 
@@ -615,6 +597,10 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   async function exportActiveFloor(svg: SVGSVGElement) {
+    if (!project.value) {
+      return
+    }
+
     const floor = selectedFloor.value
     if (!floor) {
       return
@@ -631,29 +617,45 @@ export const usePlannerStore = defineStore('planner', () => {
     const downloadUrl = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = downloadUrl
-    anchor.download = `${project.value.id}-${floor.id}.pdf`
+    anchor.download = `${project.value.id}-${activeSaveId.value}-${floor.id}.pdf`
     anchor.click()
     URL.revokeObjectURL(downloadUrl)
 
     try {
-      await uploadExport(project.value, floor.id, visibleLayers)
-      statusMessage.value = 'Export downloaded locally and logged to Firestore'
+      await uploadExport(project.value, floor.id, visibleLayers, activeSaveId.value)
+      statusMessage.value = 'Export downloaded locally and logged to Firebase'
     } catch (error) {
       statusMessage.value = error instanceof Error ? error.message : 'Export logging failed'
     }
   }
 
+  const draftStyle = computed(() => {
+    if (toolMode.value === 'polygon' || toolMode.value === 'polyline') {
+      return createDefaultEntityStyle(activeLayerType.value, toolMode.value)
+    }
+
+    return createDefaultEntityStyle(activeLayerType.value, 'point')
+  })
+
   return {
     activeLayerType,
+    activeSaveId,
+    archivedSaves,
+    assignTemplate,
+    availableSaves,
     cancelDraft,
     canEdit,
     cloneCurrentTemplate,
     commitDraft,
+    createSaveAs,
     createTemplate,
+    currentProjectId,
     currentTemplate,
     currentTemplateId,
     deleteSelectedEntity,
+    draftStyle,
     draftVertices,
+    editableMembership,
     exportActiveFloor,
     initialize,
     initialized,
@@ -661,31 +663,32 @@ export const usePlannerStore = defineStore('planner', () => {
     liveConnectionVerified,
     persist,
     project,
+    projectMeta,
+    refreshSaveLists,
+    selectEntity,
+    selectFloor,
     selectedEntity,
     selectedEntityId,
     selectedFloor,
     selectedFloorId,
-    selectEntity,
-    selectFloor,
     setActiveLayer,
+    setSaveArchived,
     setToolMode,
     statusMessage,
     syncState,
     templatesByLayer,
     toggleLayerVisibility,
     toolMode,
-    updateSelectedEntity,
-    updateSelectedEntityMetadata,
-    updateSelectedEntityVertex,
-    updateVertex,
+    translateEntity,
     updateGridSettings,
     updatePlotVertex,
+    updateSelectedEntity,
+    updateSelectedEntityVertex,
+    updateVertex,
     visibleTemplates,
     addVertexToDraft,
-    assignTemplate,
     cleanup() {
-      stopProjectSubscription?.()
-      stopProjectSubscription = undefined
+      window.clearTimeout(saveTimer)
     },
   }
 })

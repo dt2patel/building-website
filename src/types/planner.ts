@@ -13,6 +13,7 @@ export type ToolMode = 'select' | 'point' | 'polyline' | 'polygon'
 export type FloorType = 'garage' | 'office' | 'residential'
 export type SyncState = 'local' | 'syncing' | 'synced' | 'error'
 export type MeasurementUnit = 'm' | 'cm'
+export type UserRole = 'admin' | 'user'
 
 export interface GridPoint {
   x: number
@@ -57,10 +58,8 @@ export interface Floor {
   templateAssignments: Record<LayerType, string | null>
 }
 
-export interface Project {
+export interface ProjectState {
   schemaVersion: number
-  id: string
-  name: string
   units: 'm'
   gridUnit: MeasurementUnit
   gridSpacing: number
@@ -69,6 +68,75 @@ export interface Project {
   fixedStructures: PlanEntity[]
   floors: Floor[]
   templates: Template[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Project extends ProjectState {
+  id: string
+  name: string
+}
+
+export interface ProjectMeta {
+  id: string
+  name: string
+  archived: boolean
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+  defaultSaveId: string
+  lastOpenedSaveId?: string
+  migrationVersion?: number
+}
+
+export interface ProjectSaveRecord extends Omit<ProjectState, 'floors' | 'templates'> {
+  id: string
+  name: string
+  archived: boolean
+  isDefault: boolean
+  parentSaveId: string | null
+  sourceProjectId: string | null
+  createdBy: string
+}
+
+export interface ProjectSaveSummary {
+  id: string
+  name: string
+  archived: boolean
+  isDefault: boolean
+  parentSaveId: string | null
+  sourceProjectId: string | null
+  createdBy: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectMembership {
+  projectId: string
+  projectName: string
+  canEdit: boolean
+  archived: boolean
+  addedAt: string
+  updatedAt: string
+}
+
+export interface ProjectMember {
+  uid: string
+  username: string
+  canEdit: boolean
+  addedAt: string
+  updatedAt: string
+}
+
+export interface UserProfile {
+  uid: string
+  username: string
+  normalizedUsername: string
+  role: UserRole
+  archived: boolean
+  blocked: boolean
+  blockedAt?: string
+  blockedBy?: string
   createdAt: string
   updatedAt: string
 }

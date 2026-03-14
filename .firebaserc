@@ -1,5 +1,7 @@
 {
   "projects": {
     "default": "civil-engineer-09"
-  }
+  },
+  "targets": {},
+  "etags": {}
 }

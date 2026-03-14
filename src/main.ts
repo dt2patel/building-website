@@ -1,8 +1,8 @@
 import { createApp } from 'vue'
 import { IonicVue } from '@ionic/vue'
-import { createPinia } from 'pinia'
 import App from './App.vue'
 import router from './router'
+import { pinia } from './stores'
 import './style.css'
 
 import '@ionic/vue/css/core.css'
@@ -13,7 +13,7 @@ import '@ionic/vue/css/typography.css'
 const app = createApp(App)
 
 app.use(IonicVue)
-app.use(createPinia())
+app.use(pinia)
 app.use(router)
 
 router.isReady().then(() => {

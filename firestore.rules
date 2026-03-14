@@ -1,8 +1,89 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function requestingUid() {
+      return request.auth.uid;
+    }
+
+    function userProfile(uid) {
+      return get(/databases/$(database)/documents/users/$(uid));
+    }
+
+    function isAdmin() {
+      return signedIn() && userProfile(requestingUid()).data.role == 'admin';
+    }
+
+    function membershipPath(projectId) {
+      return /databases/$(database)/documents/projects/$(projectId)/members/$(requestingUid());
+    }
+
+    function membershipDoc(projectId) {
+      return get(membershipPath(projectId));
+    }
+
+    function isProjectMember(projectId) {
+      return signedIn() && exists(membershipPath(projectId));
+    }
+
+    function canEditProject(projectId) {
+      return isProjectMember(projectId) && membershipDoc(projectId).data.canEdit == true;
+    }
+
+    match /usernames/{username} {
+      allow read, create, update, delete: if isAdmin();
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && (requestingUid() == uid || isAdmin());
+      allow create, update, delete: if isAdmin();
+
+      match /projects/{projectId} {
+        allow read: if signedIn() && (requestingUid() == uid || isAdmin());
+        allow create, update, delete: if isAdmin();
+      }
+    }
+
+    match /projects/{projectId} {
+      allow read: if isProjectMember(projectId) || isAdmin();
+      allow create: if signedIn() && request.resource.data.createdBy == requestingUid();
+      allow update, delete: if canEditProject(projectId) || isAdmin();
+
+      match /members/{uid} {
+        allow read: if isProjectMember(projectId) || isAdmin();
+        allow create, update, delete: if isAdmin();
+      }
+
+      match /floors/{floorId} {
+        allow read: if isAdmin();
+      }
+
+      match /templates/{templateId} {
+        allow read: if isAdmin();
+      }
+
+      match /saves/{saveId} {
+        allow read: if isProjectMember(projectId) || isAdmin();
+        allow create, update, delete: if canEditProject(projectId) || isAdmin();
+
+        match /floors/{floorId} {
+          allow read: if isProjectMember(projectId) || isAdmin();
+          allow create, update, delete: if canEditProject(projectId) || isAdmin();
+        }
+
+        match /templates/{templateId} {
+          allow read: if isProjectMember(projectId) || isAdmin();
+          allow create, update, delete: if canEditProject(projectId) || isAdmin();
+        }
+
+        match /exports/{exportId} {
+          allow read: if isProjectMember(projectId) || isAdmin();
+          allow create, update, delete: if canEditProject(projectId) || isAdmin();
+        }
+      }
     }
   }
 }

@@ -9,6 +9,7 @@ import {
   snapToGrid,
 } from '../../lib/geometry'
 import type {
+  EntityStyle,
   Floor,
   GridPoint,
   LayerType,
@@ -19,10 +20,11 @@ import type {
 
 const props = defineProps<{
   activeLayerType: LayerType
+  draftStyle: EntityStyle
   draftVertices: GridPoint[]
   editable: boolean
   floor: Floor | undefined
-  project: Project
+  project: Project | null
   selectedEntityId: string | null
   toolMode: ToolMode
   visibleTemplates: Template[]
@@ -31,14 +33,27 @@ const props = defineProps<{
 const emit = defineEmits<{
   addVertex: [point: GridPoint]
   selectEntity: [payload: { entityId: string | null; layerType?: LayerType }]
+  translateEntity: [entityId: string, delta: GridPoint]
   updateVertex: [entityId: string, vertexIndex: number, point: GridPoint]
 }>()
 
-const svgRef = ref<SVGSVGElement | null>(null)
-const dragState = ref<{ entityId: string; vertexIndex: number } | null>(null)
-const hoverPoint = ref<GridPoint | null>(null)
+type DragState =
+  | { kind: 'vertex'; entityId: string; vertexIndex: number }
+  | { kind: 'entity'; entityId: string; lastPoint: GridPoint }
 
-const plotBounds = computed(() => getBounds(props.project.plotBoundary))
+const svgRef = ref<SVGSVGElement | null>(null)
+const dragState = ref<DragState | null>(null)
+const hoverPoint = ref<GridPoint | null>(null)
+const suppressClick = ref(false)
+
+const fallbackPlot = [
+  { x: 0, y: 0 },
+  { x: 40, y: 0 },
+  { x: 40, y: 72 },
+  { x: 0, y: 72 },
+]
+
+const plotBounds = computed(() => getBounds(props.project?.plotBoundary ?? fallbackPlot))
 const viewBoxGeometry = computed(() => {
   const bounds = plotBounds.value
   const width = bounds.maxX - bounds.minX
@@ -57,11 +72,11 @@ const viewBox = computed(
   () =>
     `${viewBoxGeometry.value.minX} ${viewBoxGeometry.value.minY} ${viewBoxGeometry.value.width} ${viewBoxGeometry.value.height}`,
 )
-const plotPath = computed(() => pointsToPath(props.project.plotBoundary, true))
+const plotPath = computed(() => pointsToPath(props.project?.plotBoundary ?? fallbackPlot, true))
 
 function pointerToGrid(event: PointerEvent | MouseEvent): GridPoint | null {
   const svg = svgRef.value
-  if (!svg) {
+  if (!svg || !props.project) {
     return null
   }
 
@@ -89,7 +104,8 @@ function handleEntityClick(
   entityId: string,
   layerType: LayerType,
 ) {
-  if (props.toolMode !== 'select') {
+  if (props.toolMode !== 'select' || suppressClick.value) {
+    suppressClick.value = false
     return
   }
 
@@ -103,8 +119,23 @@ function beginVertexDrag(event: PointerEvent, entityId: string, vertexIndex: num
   }
 
   event.stopPropagation()
-  dragState.value = { entityId, vertexIndex }
+  dragState.value = { kind: 'vertex', entityId, vertexIndex }
   ;(event.target as SVGCircleElement).setPointerCapture(event.pointerId)
+}
+
+function beginEntityDrag(event: PointerEvent, entityId: string) {
+  if (!props.editable || props.toolMode !== 'select') {
+    return
+  }
+
+  const point = pointerToGrid(event)
+  if (!point) {
+    return
+  }
+
+  event.stopPropagation()
+  dragState.value = { kind: 'entity', entityId, lastPoint: point }
+  ;(event.target as SVGPathElement).setPointerCapture(event.pointerId)
 }
 
 function handlePointerMove(event: PointerEvent) {
@@ -115,7 +146,23 @@ function handlePointerMove(event: PointerEvent) {
     return
   }
 
-  emit('updateVertex', dragState.value.entityId, dragState.value.vertexIndex, point)
+  if (dragState.value.kind === 'vertex') {
+    emit('updateVertex', dragState.value.entityId, dragState.value.vertexIndex, point)
+    return
+  }
+
+  const delta = {
+    x: point.x - dragState.value.lastPoint.x,
+    y: point.y - dragState.value.lastPoint.y,
+  }
+
+  if (delta.x === 0 && delta.y === 0) {
+    return
+  }
+
+  suppressClick.value = true
+  dragState.value.lastPoint = point
+  emit('translateEntity', dragState.value.entityId, delta)
 }
 
 function releaseDrag() {
@@ -152,7 +199,7 @@ const compass = computed(() => {
 })
 
 const hoverLabel = computed(() => {
-  if (!hoverPoint.value) {
+  if (!hoverPoint.value || !props.project) {
     return 'Hover the plot to inspect coordinates'
   }
 
@@ -175,7 +222,7 @@ defineExpose({
         <h2>{{ floor?.name ?? 'No floor selected' }}</h2>
       </div>
       <div class="editor-stage__meta">
-        <p class="editor-stage__hint">
+        <p v-if="project" class="editor-stage__hint">
           Plot on a snapped {{ project.gridSpacing }} {{ project.gridUnit }} grid with plot-based coordinates.
         </p>
         <p v-if="!editable" class="editor-stage__hint editor-stage__hint--readonly">
@@ -194,7 +241,7 @@ defineExpose({
       @pointerup="releaseDrag"
       @pointerleave="clearHover"
     >
-      <defs>
+      <defs v-if="project">
         <pattern
           id="gridPattern"
           :width="gridSpacingInMeters(project.gridSpacing, project.gridUnit)"
@@ -215,7 +262,7 @@ defineExpose({
         :y="viewBoxGeometry.minY"
         :width="viewBoxGeometry.width"
         :height="viewBoxGeometry.height"
-        fill="url(#gridPattern)"
+        :fill="project ? 'url(#gridPattern)' : '#f8f5ed'"
       />
       <path :d="plotPath" class="boundary boundary--plot" />
 
@@ -224,7 +271,7 @@ defineExpose({
       <text class="compass-label" :x="compass.west.x" :y="compass.west.y">W</text>
       <text class="compass-label" :x="compass.east.x" :y="compass.east.y">E</text>
 
-      <g class="fixed-shell">
+      <g v-if="project" class="fixed-shell">
         <template v-for="structure in project.fixedStructures" :key="structure.id">
           <path :d="pointsToPath(structure.vertices, true)" class="fixed-structure" />
           <text
@@ -250,6 +297,7 @@ defineExpose({
             opacity: isActiveLayer ? entity.style.opacity : 0.46,
           }"
           @click="handleEntityClick($event, entity.id, template.layerType)"
+          @pointerdown="beginEntityDrag($event, entity.id)"
         />
         <path
           v-else-if="entity.geometryType === 'polyline'"
@@ -264,6 +312,7 @@ defineExpose({
             strokeDasharray: entity.style.dashed ? '2 1.4' : 'none',
           }"
           @click="handleEntityClick($event, entity.id, template.layerType)"
+          @pointerdown="beginEntityDrag($event, entity.id)"
         />
         <g
           v-else
@@ -311,6 +360,12 @@ defineExpose({
         <path
           :d="pointsToPath(draftVertices, toolMode === 'polygon' && draftVertices.length > 2)"
           class="draft-shape"
+          :style="{
+            stroke: draftStyle.stroke,
+            fill: toolMode === 'polygon' ? draftStyle.fill : 'none',
+            strokeWidth: draftStyle.strokeWidth,
+            opacity: draftStyle.opacity,
+          }"
         />
         <circle
           v-for="(vertex, index) in draftVertices"
