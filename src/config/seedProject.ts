@@ -29,8 +29,8 @@ function polygon(
     style: {
       stroke,
       fill,
-      strokeWidth: 0.8,
-      opacity: 0.8,
+      strokeWidth: layerType === 'perimeter' ? 0.28 : 0.38,
+      opacity: layerType === 'perimeter' ? 1 : 0.82,
     },
     metadata: {},
   }
@@ -54,7 +54,7 @@ function polyline(
     style: {
       stroke,
       fill: 'none',
-      strokeWidth: 0.8,
+      strokeWidth: 0.28,
       opacity: 0.95,
       dashed,
     },
@@ -81,92 +81,196 @@ function point(
     style: {
       stroke,
       fill: '#ffffff',
-      strokeWidth: 0.6,
+      strokeWidth: 0.22,
       opacity: 1,
     },
     metadata: {},
   }
 }
 
-function buildFloors(): Floor[] {
-  const baseAssignments = createEmptyAssignments()
-  baseAssignments.structural = 'tpl-structural-master'
-  baseAssignments.plumbing = 'tpl-plumbing-master'
-  baseAssignments.fireSafety = 'tpl-fire-master'
-  baseAssignments.electrical = 'tpl-electrical-master'
-  baseAssignments.custom = 'tpl-custom-blank'
+function createColumnGrid() {
+  const columnXs = [6.015, 12.265, 18.515, 24.765, 31.015]
+  const columnYs = [11.365, 18.865, 26.365, 33.865, 41.365, 48.865, 56.365, 63.715]
 
-  const floorTypes: Floor['floorType'][] = [
-    'garage',
-    'garage',
-    'garage',
-    'office',
-    'office',
-    'office',
-    'office',
-    'office',
-    'office',
-    'office',
+  return columnYs.flatMap((y, rowIndex) =>
+    columnXs.map((x, columnIndex) =>
+      point(
+        `col-${rowIndex + 1}-${columnIndex + 1}`,
+        'structural',
+        `Column ${rowIndex + 1}.${columnIndex + 1}`,
+        { x, y },
+        'column',
+      ),
+    ),
+  )
+}
+
+function buildFloors(): Floor[] {
+  const layouts = [
+    { id: 'floor-ground', name: 'Ground Parking', floorType: 'garage' as const, perimeter: 'tpl-perimeter-ground' },
+    { id: 'floor-podium', name: 'Podium Parking', floorType: 'garage' as const, perimeter: 'tpl-perimeter-podium' },
+    { id: 'floor-01', name: 'First Floor', floorType: 'office' as const, perimeter: 'tpl-perimeter-office' },
+    { id: 'floor-02', name: 'Second Floor', floorType: 'office' as const, perimeter: 'tpl-perimeter-office' },
+    { id: 'floor-03', name: 'Third Floor', floorType: 'office' as const, perimeter: 'tpl-perimeter-office' },
+    { id: 'floor-04', name: 'Fourth Floor', floorType: 'office' as const, perimeter: 'tpl-perimeter-office' },
+    { id: 'floor-05', name: 'Fifth Floor', floorType: 'office' as const, perimeter: 'tpl-perimeter-office' },
+    { id: 'floor-06', name: 'Sixth Floor', floorType: 'office' as const, perimeter: 'tpl-perimeter-office' },
+    { id: 'floor-service', name: 'Service Floor', floorType: 'office' as const, perimeter: 'tpl-perimeter-service' },
+    { id: 'floor-terrace', name: 'Terrace Floor', floorType: 'office' as const, perimeter: 'tpl-perimeter-terrace' },
   ]
 
-  return floorTypes.map((floorType, index) => ({
-    id: `floor-${index + 1}`,
-    name: `Floor ${index + 1}`,
-    index: index + 1,
-    floorType,
-    templateAssignments: { ...baseAssignments },
-  }))
+  return layouts.map((layout, index) => {
+    const assignments = createEmptyAssignments()
+    assignments.perimeter = layout.perimeter
+    assignments.structural = 'tpl-structural-columns'
+    assignments.plumbing = 'tpl-plumbing-master'
+    assignments.fireSafety = 'tpl-fire-master'
+    assignments.electrical = 'tpl-electrical-master'
+    assignments.custom = 'tpl-custom-blank'
+
+    return {
+      id: layout.id,
+      name: layout.name,
+      index: index + 1,
+      floorType: layout.floorType,
+      templateAssignments: assignments,
+    }
+  })
 }
 
 function buildTemplates(timestamp: string): Template[] {
-  const columns = [
-    [22, 20],
-    [40, 20],
-    [58, 20],
-    [76, 20],
-    [94, 20],
-    [22, 38],
-    [40, 38],
-    [58, 38],
-    [76, 38],
-    [94, 38],
-    [22, 56],
-    [40, 56],
-    [58, 56],
-    [76, 56],
-    [94, 56],
-  ].map(([x, y], index) =>
-    point(`col-${index + 1}`, 'structural', `Column ${index + 1}`, { x, y }, 'column'),
-  )
+  const columns = createColumnGrid()
 
   return [
     {
-      id: 'tpl-structural-master',
-      name: 'Columns + walls',
+      id: 'tpl-perimeter-ground',
+      name: 'Ground parking perimeter',
+      layerType: 'perimeter',
+      version: 1,
+      status: 'active',
+      updatedAt: timestamp,
+      entities: [
+        polygon(
+          'per-ground',
+          'perimeter',
+          'Ground parking shell',
+          [
+            { x: 6, y: 6 },
+            { x: 31, y: 6 },
+            { x: 31, y: 66.85 },
+            { x: 6, y: 66.85 },
+          ],
+          'rgba(55, 65, 81, 0.04)',
+        ),
+      ],
+    },
+    {
+      id: 'tpl-perimeter-podium',
+      name: 'Podium parking perimeter',
+      layerType: 'perimeter',
+      version: 1,
+      status: 'active',
+      updatedAt: timestamp,
+      entities: [
+        polygon(
+          'per-podium',
+          'perimeter',
+          'Podium parking shell',
+          [
+            { x: 7.2, y: 6.25 },
+            { x: 32.205, y: 6.25 },
+            { x: 32.205, y: 64.05 },
+            { x: 7.2, y: 64.05 },
+          ],
+          'rgba(55, 65, 81, 0.04)',
+        ),
+      ],
+    },
+    {
+      id: 'tpl-perimeter-office',
+      name: 'Office perimeter',
+      layerType: 'perimeter',
+      version: 1,
+      status: 'active',
+      updatedAt: timestamp,
+      entities: [
+        polygon(
+          'per-office',
+          'perimeter',
+          'Office shell',
+          [
+            { x: 7.25, y: 6.1 },
+            { x: 32.25, y: 6.1 },
+            { x: 32.25, y: 66.95 },
+            { x: 7.25, y: 66.95 },
+            { x: 7.25, y: 13.6 },
+            { x: 18.9, y: 13.6 },
+            { x: 18.9, y: 6.1 },
+          ],
+          'rgba(55, 65, 81, 0.04)',
+        ),
+      ],
+    },
+    {
+      id: 'tpl-perimeter-service',
+      name: 'Service floor perimeter',
+      layerType: 'perimeter',
+      version: 1,
+      status: 'active',
+      updatedAt: timestamp,
+      entities: [
+        polygon(
+          'per-service',
+          'perimeter',
+          'Service shell',
+          [
+            { x: 7.25, y: 6.1 },
+            { x: 32.25, y: 6.1 },
+            { x: 32.25, y: 66.95 },
+            { x: 7.25, y: 66.95 },
+          ],
+          'rgba(55, 65, 81, 0.04)',
+        ),
+      ],
+    },
+    {
+      id: 'tpl-perimeter-terrace',
+      name: 'Terrace perimeter',
+      layerType: 'perimeter',
+      version: 1,
+      status: 'active',
+      updatedAt: timestamp,
+      entities: [
+        polygon(
+          'per-terrace',
+          'perimeter',
+          'Terrace shell',
+          [
+            { x: 7.25, y: 6.1 },
+            { x: 32.25, y: 6.1 },
+            { x: 32.25, y: 66.95 },
+            { x: 7.25, y: 66.95 },
+          ],
+          'rgba(55, 65, 81, 0.04)',
+        ),
+      ],
+    },
+    {
+      id: 'tpl-structural-columns',
+      name: 'Column grid',
       layerType: 'structural',
       version: 1,
       status: 'active',
       updatedAt: timestamp,
       entities: [
         ...columns,
-        polyline('wall-corridor', 'structural', 'Main corridor wall', [
-          { x: 16, y: 30 },
-          { x: 104, y: 30 },
-          { x: 104, y: 34 },
-          { x: 16, y: 34 },
+        polyline('central-stair', 'structural', 'Central stair / ramp block', [
+          { x: 11.1, y: 16.2 },
+          { x: 16.5, y: 16.2 },
+          { x: 16.5, y: 42.2 },
+          { x: 11.1, y: 42.2 },
+          { x: 11.1, y: 16.2 },
         ]),
-        polygon(
-          'meeting-shell',
-          'structural',
-          'Meeting room shell',
-          [
-            { x: 84, y: 44 },
-            { x: 104, y: 44 },
-            { x: 104, y: 62 },
-            { x: 84, y: 62 },
-          ],
-          'rgba(29, 78, 216, 0.18)',
-        ),
       ],
     },
     {
@@ -178,23 +282,23 @@ function buildTemplates(timestamp: string): Template[] {
       updatedAt: timestamp,
       entities: [
         polyline('plumb-stack', 'plumbing', 'Wet wall main', [
-          { x: 64, y: 18 },
-          { x: 64, y: 68 },
+          { x: 13.8, y: 18.0 },
+          { x: 13.8, y: 60.5 },
         ]),
         polyline('plumb-branch', 'plumbing', 'Branch to washroom block', [
-          { x: 64, y: 44 },
-          { x: 82, y: 44 },
-          { x: 82, y: 52 },
+          { x: 13.8, y: 44.0 },
+          { x: 22.4, y: 44.0 },
+          { x: 22.4, y: 51.2 },
         ]),
         polygon(
           'water-tank',
           'plumbing',
-          'Utility water tank',
+          'Domestic water tank',
           [
-            { x: 14, y: 58 },
-            { x: 28, y: 58 },
-            { x: 28, y: 72 },
-            { x: 14, y: 72 },
+            { x: 19.4, y: 6.8 },
+            { x: 25.4, y: 6.8 },
+            { x: 25.4, y: 12.8 },
+            { x: 19.4, y: 12.8 },
           ],
           'rgba(15, 118, 110, 0.18)',
         ),
@@ -209,25 +313,25 @@ function buildTemplates(timestamp: string): Template[] {
       updatedAt: timestamp,
       entities: [
         polyline('fire-loop', 'fireSafety', 'Perimeter fire loop', [
-          { x: 12, y: 14 },
-          { x: 108, y: 14 },
-          { x: 108, y: 76 },
-          { x: 12, y: 76 },
-          { x: 12, y: 14 },
+          { x: 7.4, y: 6.4 },
+          { x: 32.0, y: 6.4 },
+          { x: 32.0, y: 66.6 },
+          { x: 7.4, y: 66.6 },
+          { x: 7.4, y: 6.4 },
         ]),
         polyline('sprinkler-main', 'fireSafety', 'Sprinkler main', [
-          { x: 18, y: 50 },
-          { x: 100, y: 50 },
+          { x: 10.0, y: 34.2 },
+          { x: 30.0, y: 34.2 },
         ], undefined, true),
         polygon(
           'fire-tank',
           'fireSafety',
           'Fire reserve tank',
           [
-            { x: 92, y: 58 },
-            { x: 106, y: 58 },
-            { x: 106, y: 72 },
-            { x: 92, y: 72 },
+            { x: 26.7, y: 60.4 },
+            { x: 31.0, y: 60.4 },
+            { x: 31.0, y: 66.2 },
+            { x: 26.7, y: 66.2 },
           ],
           'rgba(185, 28, 28, 0.18)',
         ),
@@ -241,16 +345,16 @@ function buildTemplates(timestamp: string): Template[] {
       status: 'active',
       updatedAt: timestamp,
       entities: [
-        point('panel-main', 'electrical', 'Main panel', { x: 18, y: 18 }, 'panel'),
+        point('panel-main', 'electrical', 'Main panel', { x: 8.4, y: 59.4 }, 'panel'),
         polyline('bus-trunk', 'electrical', 'Cable trunk', [
-          { x: 18, y: 18 },
-          { x: 18, y: 44 },
-          { x: 92, y: 44 },
+          { x: 8.4, y: 59.4 },
+          { x: 8.4, y: 16.0 },
+          { x: 28.6, y: 16.0 },
         ]),
         polyline('server-feed', 'electrical', 'Server room feed', [
-          { x: 92, y: 44 },
-          { x: 92, y: 60 },
-          { x: 102, y: 60 },
+          { x: 28.6, y: 16.0 },
+          { x: 28.6, y: 9.2 },
+          { x: 19.8, y: 9.2 },
         ]),
       ],
     },
@@ -270,63 +374,25 @@ export function createSeedProject(): Project {
   const timestamp = now()
 
   return {
+    schemaVersion: 2,
     id: 'eklavya-blueprint-lab',
     name: 'Eklavya Blueprint Lab',
-    units: 'ft',
-    gridSpacing: 2,
+    units: 'm',
+    gridUnit: 'm',
+    gridSpacing: 1,
     plotBoundary: [
       { x: 0, y: 0 },
-      { x: 120, y: 0 },
-      { x: 120, y: 90 },
-      { x: 0, y: 90 },
+      { x: 40, y: -3 },
+      { x: 40.462, y: 72.35 },
+      { x: 0, y: 72.35 },
     ],
     buildingBoundary: [
-      { x: 8, y: 10 },
-      { x: 112, y: 10 },
-      { x: 112, y: 80 },
-      { x: 8, y: 80 },
+      { x: 6, y: 6 },
+      { x: 31, y: 6 },
+      { x: 31, y: 66.85 },
+      { x: 6, y: 66.85 },
     ],
-    fixedStructures: [
-      polygon(
-        'fixed-stair-west',
-        'structural',
-        'West stair',
-        [
-          { x: 12, y: 24 },
-          { x: 24, y: 24 },
-          { x: 24, y: 40 },
-          { x: 12, y: 40 },
-        ],
-        'rgba(46, 52, 64, 0.18)',
-        '#384152',
-      ),
-      polygon(
-        'fixed-lift-core',
-        'structural',
-        'Lift core',
-        [
-          { x: 52, y: 28 },
-          { x: 68, y: 28 },
-          { x: 68, y: 44 },
-          { x: 52, y: 44 },
-        ],
-        'rgba(46, 52, 64, 0.18)',
-        '#384152',
-      ),
-      polygon(
-        'fixed-stair-east',
-        'structural',
-        'East stair',
-        [
-          { x: 96, y: 24 },
-          { x: 108, y: 24 },
-          { x: 108, y: 40 },
-          { x: 96, y: 40 },
-        ],
-        'rgba(46, 52, 64, 0.18)',
-        '#384152',
-      ),
-    ],
+    fixedStructures: [],
     floors: buildFloors(),
     templates: buildTemplates(timestamp),
     createdAt: timestamp,

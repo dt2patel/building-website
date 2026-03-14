@@ -196,6 +196,10 @@ h3 {
   color: var(--planner-muted);
 }
 
+.field--compact {
+  margin-bottom: 0;
+}
+
 .field input,
 .field select,
 .field textarea {
@@ -204,6 +208,55 @@ h3 {
   border: 1px solid rgba(22, 33, 43, 0.12);
   border-radius: 14px;
   background: #fffdf8;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.plot-vertex-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.plot-vertex {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(239, 232, 216, 0.55);
+}
+
+.plot-vertex small {
+  color: var(--planner-muted);
+  font-size: 0.76rem;
+}
+
+.vertex-editor {
+  margin: 12px 0 16px;
+}
+
+.vertex-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(239, 232, 216, 0.4);
+}
+
+.vertex-row + .vertex-row {
+  margin-top: 10px;
+}
+
+.vertex-row__label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--planner-muted);
 }
 
 .button-row,
@@ -233,6 +286,14 @@ h3 {
   color: var(--planner-red);
 }
 
+button:disabled,
+input:disabled,
+select:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.56;
+}
+
 .toolbar {
   justify-content: space-between;
   align-items: center;
@@ -241,6 +302,12 @@ h3 {
 
 .toolbar__group--meta {
   align-items: center;
+}
+
+.toolbar__notice {
+  max-width: 260px;
+  color: var(--planner-muted);
+  font-size: 0.82rem;
 }
 
 .status-pill {
@@ -295,6 +362,22 @@ h3 {
   color: var(--planner-muted);
 }
 
+.editor-stage__meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.editor-stage__hover {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.86rem;
+}
+
+.editor-stage__hint--readonly {
+  color: var(--planner-red);
+}
+
 .editor-canvas {
   width: 100%;
   height: 100%;
@@ -313,18 +396,13 @@ h3 {
 
 .boundary--plot {
   stroke: rgba(28, 37, 48, 0.48);
-  stroke-width: 0.8;
-}
-
-.boundary--building {
-  stroke: rgba(28, 37, 48, 0.88);
-  stroke-width: 1.1;
+  stroke-width: 0.35;
 }
 
 .fixed-structure {
   fill: rgba(56, 65, 82, 0.18);
   stroke: #384152;
-  stroke-width: 0.7;
+  stroke-width: 0.26;
 }
 
 .shape {
@@ -339,11 +417,11 @@ h3 {
 .shape--selected,
 .vertex-handle {
   stroke: #111827;
-  stroke-width: 0.3;
+  stroke-width: 0.12;
 }
 
 .point-cross {
-  stroke-width: 0.35;
+  stroke-width: 0.16;
 }
 
 .vertex-handle {
@@ -360,7 +438,7 @@ h3 {
 
 .entity-label {
   fill: #16212b;
-  font-size: 2.1px;
+  font-size: 1.15px;
   font-family: 'IBM Plex Mono', monospace;
 }
 
@@ -370,6 +448,13 @@ h3 {
 
 .entity-label--active {
   font-weight: 600;
+}
+
+.compass-label {
+  fill: #16212b;
+  font-size: 1.6px;
+  font-weight: 700;
+  text-anchor: middle;
 }
 
 .inspector {
@@ -400,5 +485,10 @@ h3 {
   .toolbar,
   .editor-stage__header {
     flex-direction: column;
+  }
+
+  .plot-vertex-grid,
+  .field-grid {
+    grid-template-columns: 1fr;
   }
 }

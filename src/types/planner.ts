@@ -1,4 +1,5 @@
 export const layerOrder = [
+  'perimeter',
   'structural',
   'plumbing',
   'fireSafety',
@@ -11,6 +12,7 @@ export type GeometryType = 'point' | 'polyline' | 'polygon'
 export type ToolMode = 'select' | 'point' | 'polyline' | 'polygon'
 export type FloorType = 'garage' | 'office' | 'residential'
 export type SyncState = 'local' | 'syncing' | 'synced' | 'error'
+export type MeasurementUnit = 'm' | 'cm'
 
 export interface GridPoint {
   x: number
@@ -56,9 +58,11 @@ export interface Floor {
 }
 
 export interface Project {
+  schemaVersion: number
   id: string
   name: string
-  units: string
+  units: 'm'
+  gridUnit: MeasurementUnit
   gridSpacing: number
   plotBoundary: GridPoint[]
   buildingBoundary: GridPoint[]
@@ -80,6 +84,7 @@ export interface ExportRecord {
 }
 
 export const layerLabels: Record<LayerType, string> = {
+  perimeter: 'Perimeter',
   structural: 'Structural',
   plumbing: 'Plumbing',
   fireSafety: 'Fire Safety',
@@ -88,6 +93,7 @@ export const layerLabels: Record<LayerType, string> = {
 }
 
 export const layerColors: Record<LayerType, string> = {
+  perimeter: '#374151',
   structural: '#1d4ed8',
   plumbing: '#0f766e',
   fireSafety: '#b91c1c',
@@ -97,6 +103,7 @@ export const layerColors: Record<LayerType, string> = {
 
 export function createEmptyAssignments(): Record<LayerType, string | null> {
   return {
+    perimeter: null,
     structural: null,
     plumbing: null,
     fireSafety: null,

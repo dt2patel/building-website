@@ -2,11 +2,12 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { createSeedProject } from '../config/seedProject'
 import { exportFloorPdf } from '../lib/export'
-import { cloneJson } from '../lib/geometry'
+import { cloneJson, fromDisplayValue } from '../lib/geometry'
 import { isFirebaseConfigured } from '../services/firebase'
 import {
   loadProject,
   saveProject,
+  subscribeToProject,
   uploadExport,
 } from '../services/plannerRepository'
 import {
@@ -14,6 +15,7 @@ import {
   layerOrder,
   type GridPoint,
   type LayerType,
+  type MeasurementUnit,
   type PlanEntity,
   type Project,
   type SyncState,
@@ -34,16 +36,18 @@ function entityLabel(layerType: LayerType, geometryType: PlanEntity['geometryTyp
 }
 
 export const usePlannerStore = defineStore('planner', () => {
+  const firebaseEnabled = isFirebaseConfigured()
   const project = ref<Project>(createSeedProject())
   const selectedFloorId = ref(project.value.floors[0]?.id ?? '')
-  const activeLayerType = ref<LayerType>('structural')
+  const activeLayerType = ref<LayerType>('perimeter')
   const selectedEntityId = ref<string | null>(null)
   const toolMode = ref<ToolMode>('select')
   const draftVertices = ref<GridPoint[]>([])
   const syncState = ref<SyncState>('local')
-  const statusMessage = ref('Local draft')
+  const statusMessage = ref('Connect to a live Firestore session to edit')
   const initialized = ref(false)
   const layerVisibility = ref<Record<LayerType, boolean>>({
+    perimeter: true,
     structural: true,
     plumbing: true,
     fireSafety: true,
@@ -52,6 +56,9 @@ export const usePlannerStore = defineStore('planner', () => {
   })
 
   let saveTimer: number | undefined
+  let stopProjectSubscription: (() => void) | undefined
+  const liveConnectionVerified = ref(false)
+  const hasPendingWrites = ref(false)
 
   const selectedFloor = computed(
     () => project.value.floors.find((floor) => floor.id === selectedFloorId.value) ?? project.value.floors[0],
@@ -63,9 +70,7 @@ export const usePlannerStore = defineStore('planner', () => {
 
   const currentTemplate = computed(
     () =>
-      project.value.templates.find((template) => template.id === currentTemplateId.value) ??
-      project.value.templates.find((template) => template.layerType === activeLayerType.value) ??
-      null,
+      project.value.templates.find((template) => template.id === currentTemplateId.value) ?? null,
   )
 
   const selectedEntity = computed(
@@ -96,6 +101,92 @@ export const usePlannerStore = defineStore('planner', () => {
       .filter((template): template is Template => Boolean(template))
   })
 
+  const canEdit = computed(() => firebaseEnabled && liveConnectionVerified.value)
+
+  function lockEditingStatus(message: string) {
+    liveConnectionVerified.value = false
+    hasPendingWrites.value = false
+    syncState.value = firebaseEnabled ? 'error' : 'local'
+    statusMessage.value = message
+    draftVertices.value = []
+    toolMode.value = 'select'
+  }
+
+  function applyProjectSnapshot(nextProject: Project) {
+    const nextSelectedFloorId = nextProject.floors.some((floor) => floor.id === selectedFloorId.value)
+      ? selectedFloorId.value
+      : nextProject.floors[0]?.id ?? ''
+
+    const entityStillExists = nextProject.templates.some((template) =>
+      template.entities.some((entity) => entity.id === selectedEntityId.value),
+    )
+
+    project.value = nextProject
+    selectedFloorId.value = nextSelectedFloorId
+
+    if (!entityStillExists) {
+      selectedEntityId.value = null
+    }
+  }
+
+  function updateRealtimeState(state: { exists: boolean; hasPendingWrites: boolean; live: boolean }) {
+    hasPendingWrites.value = state.hasPendingWrites
+    liveConnectionVerified.value = state.live
+
+    if (!firebaseEnabled) {
+      syncState.value = 'local'
+      statusMessage.value = 'Connect to a live Firestore session to edit'
+      return
+    }
+
+    if (!state.live) {
+      lockEditingStatus('Read-only until a live Firestore connection is restored')
+      return
+    }
+
+    syncState.value = state.hasPendingWrites ? 'syncing' : 'synced'
+    statusMessage.value = state.hasPendingWrites
+      ? 'Syncing live changes to Firebase...'
+      : state.exists
+        ? 'Live Firestore session connected'
+        : 'Live Firestore session connected. First edit will create the shared project.'
+  }
+
+  function startRealtimeSync() {
+    stopProjectSubscription?.()
+
+    if (!firebaseEnabled) {
+      lockEditingStatus('Firebase config missing. Editing is locked.')
+      return
+    }
+
+    syncState.value = 'syncing'
+    statusMessage.value = 'Connecting to live Firestore session...'
+
+    stopProjectSubscription = subscribeToProject(project.value.id, {
+      onProject: (nextProject) => {
+        applyProjectSnapshot(nextProject)
+      },
+      onStateChange: (state) => {
+        updateRealtimeState(state)
+      },
+      onError: (error) => {
+        lockEditingStatus(error.message || 'Live Firestore listener failed')
+      },
+    })
+  }
+
+  function ensureEditableSession() {
+    if (!canEdit.value) {
+      statusMessage.value = firebaseEnabled
+        ? 'Read-only until a live Firestore connection is restored'
+        : 'Firebase config missing. Editing is locked.'
+      return false
+    }
+
+    return true
+  }
+
   async function initialize() {
     if (initialized.value) {
       return
@@ -104,10 +195,13 @@ export const usePlannerStore = defineStore('planner', () => {
     project.value = await loadProject()
     selectedFloorId.value = project.value.floors[0]?.id ?? ''
     initialized.value = true
-    syncState.value = isFirebaseConfigured() ? 'synced' : 'local'
-    statusMessage.value = isFirebaseConfigured()
-      ? 'Ready to sync with Firebase'
-      : 'Firebase config missing, saving locally'
+    if (!firebaseEnabled) {
+      syncState.value = 'local'
+      statusMessage.value = 'Firebase config missing. Editing is locked.'
+      return
+    }
+
+    startRealtimeSync()
   }
 
   function touchProject() {
@@ -122,16 +216,22 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   async function persist() {
-    syncState.value = isFirebaseConfigured() ? 'syncing' : 'local'
-    statusMessage.value = isFirebaseConfigured() ? 'Syncing to Firebase...' : 'Saved locally'
+    if (!firebaseEnabled) {
+      lockEditingStatus('Firebase config missing. Editing is locked.')
+      return
+    }
+
+    syncState.value = 'syncing'
+    statusMessage.value = 'Syncing live changes to Firebase...'
 
     try {
       await saveProject(project.value)
-      syncState.value = isFirebaseConfigured() ? 'synced' : 'local'
-      statusMessage.value = isFirebaseConfigured() ? 'Synced to Firebase' : 'Saved locally'
+      syncState.value = hasPendingWrites.value ? 'syncing' : 'synced'
+      statusMessage.value = hasPendingWrites.value
+        ? 'Syncing live changes to Firebase...'
+        : 'Synced to Firebase'
     } catch (error) {
-      syncState.value = 'error'
-      statusMessage.value = error instanceof Error ? error.message : 'Unable to persist planner state'
+      lockEditingStatus(error instanceof Error ? error.message : 'Unable to persist planner state')
     }
   }
 
@@ -150,6 +250,10 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function setToolMode(mode: ToolMode) {
+    if (mode !== 'select' && !ensureEditableSession()) {
+      return
+    }
+
     toolMode.value = mode
     selectedEntityId.value = null
     if (mode === 'select') {
@@ -157,8 +261,13 @@ export const usePlannerStore = defineStore('planner', () => {
     }
   }
 
-  function selectEntity(entityId: string | null) {
-    selectedEntityId.value = entityId
+  function selectEntity(selection: { entityId: string | null; layerType?: LayerType } | null) {
+    if (selection?.layerType && selection.layerType !== activeLayerType.value) {
+      activeLayerType.value = selection.layerType
+      draftVertices.value = []
+    }
+
+    selectedEntityId.value = selection?.entityId ?? null
     toolMode.value = 'select'
   }
 
@@ -167,6 +276,10 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function assignTemplate(layerType: LayerType, templateId: string | null) {
+    if (!ensureEditableSession()) {
+      return
+    }
+
     const floor = selectedFloor.value
     if (!floor) {
       return
@@ -178,10 +291,47 @@ export const usePlannerStore = defineStore('planner', () => {
 
     if (layerType === activeLayerType.value) {
       selectedEntityId.value = null
+      draftVertices.value = []
+      toolMode.value = 'select'
     }
   }
 
+  function updateGridSettings(unit: MeasurementUnit, spacing: number) {
+    if (!ensureEditableSession()) {
+      return
+    }
+
+    project.value.gridUnit = unit
+    project.value.gridSpacing = spacing
+    touchProject()
+    queueSave()
+  }
+
+  function updatePlotVertex(
+    vertexIndex: number,
+    axis: 'x' | 'y',
+    rawValue: number,
+    unit: MeasurementUnit,
+  ) {
+    if (!ensureEditableSession()) {
+      return
+    }
+
+    const vertex = project.value.plotBoundary[vertexIndex]
+    if (!vertex || Number.isNaN(rawValue)) {
+      return
+    }
+
+    vertex[axis] = fromDisplayValue(rawValue, unit)
+    touchProject()
+    queueSave()
+  }
+
   function createTemplate() {
+    if (!ensureEditableSession()) {
+      return
+    }
+
     const layerType = activeLayerType.value
     const nextNumber = templatesByLayer.value[layerType].length + 1
     const name = `${layerType} concept ${nextNumber}`
@@ -196,16 +346,17 @@ export const usePlannerStore = defineStore('planner', () => {
     }
 
     project.value.templates.push(template)
-
-    if (!selectedFloor.value.templateAssignments[layerType]) {
-      assignTemplate(layerType, template.id)
-    }
+    assignTemplate(layerType, template.id)
 
     touchProject()
     queueSave()
   }
 
   function cloneCurrentTemplate() {
+    if (!ensureEditableSession()) {
+      return
+    }
+
     if (!currentTemplate.value) {
       return
     }
@@ -232,6 +383,10 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function ensureEditableTemplate() {
+    if (!ensureEditableSession()) {
+      return null
+    }
+
     if (currentTemplate.value) {
       return currentTemplate.value
     }
@@ -252,8 +407,15 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function addVertexToDraft(point: GridPoint) {
+    if (!ensureEditableSession()) {
+      return
+    }
+
     if (toolMode.value === 'point') {
       const template = ensureEditableTemplate()
+      if (!template) {
+        return
+      }
       const entityCount = template.entities.length + 1
       const entity: PlanEntity = {
         id: `${activeLayerType.value}-point-${Date.now()}`,
@@ -275,6 +437,7 @@ export const usePlannerStore = defineStore('planner', () => {
       template.entities.push(entity)
       template.updatedAt = timestamp()
       selectedEntityId.value = entity.id
+      toolMode.value = 'select'
       touchProject()
       queueSave()
       return
@@ -285,6 +448,9 @@ export const usePlannerStore = defineStore('planner', () => {
 
   function commitDraft() {
     const template = ensureEditableTemplate()
+    if (!template) {
+      return
+    }
     const minimumVertices = toolMode.value === 'polygon' ? 3 : 2
     if (!['polyline', 'polygon'].includes(toolMode.value) || draftVertices.value.length < minimumVertices) {
       return
@@ -312,6 +478,7 @@ export const usePlannerStore = defineStore('planner', () => {
     template.updatedAt = timestamp()
     draftVertices.value = []
     selectedEntityId.value = entity.id
+    toolMode.value = 'select'
     touchProject()
     queueSave()
   }
@@ -321,6 +488,10 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function updateSelectedEntity(patch: Partial<PlanEntity>) {
+    if (!ensureEditableSession()) {
+      return
+    }
+
     if (!selectedEntity.value || !currentTemplate.value) {
       return
     }
@@ -332,6 +503,10 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function updateSelectedEntityMetadata(key: string, value: string) {
+    if (!ensureEditableSession()) {
+      return
+    }
+
     if (!selectedEntity.value || !currentTemplate.value) {
       return
     }
@@ -343,6 +518,10 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function updateVertex(entityId: string, vertexIndex: number, point: GridPoint) {
+    if (!ensureEditableSession()) {
+      return
+    }
+
     const template = visibleTemplates.value.find((item) => item.entities.some((entity) => entity.id === entityId))
     const entity = template?.entities.find((item) => item.id === entityId)
     if (!template || !entity || !entity.vertices[vertexIndex]) {
@@ -355,7 +534,34 @@ export const usePlannerStore = defineStore('planner', () => {
     queueSave()
   }
 
+  function updateSelectedEntityVertex(
+    vertexIndex: number,
+    axis: 'x' | 'y',
+    rawValue: number,
+    unit: MeasurementUnit,
+  ) {
+    if (!ensureEditableSession()) {
+      return
+    }
+
+    if (!selectedEntity.value || Number.isNaN(rawValue)) {
+      return
+    }
+
+    const point = cloneJson(selectedEntity.value.vertices[vertexIndex])
+    if (!point) {
+      return
+    }
+
+    point[axis] = fromDisplayValue(rawValue, unit)
+    updateVertex(selectedEntity.value.id, vertexIndex, point)
+  }
+
   function deleteSelectedEntity() {
+    if (!ensureEditableSession()) {
+      return
+    }
+
     if (!selectedEntity.value || !currentTemplate.value) {
       return
     }
@@ -391,18 +597,17 @@ export const usePlannerStore = defineStore('planner', () => {
     URL.revokeObjectURL(downloadUrl)
 
     try {
-      const record = await uploadExport(project.value, floor.id, blob)
-      statusMessage.value = record.storagePath
-        ? 'Export saved locally and uploaded to Firebase Storage'
-        : 'Export downloaded locally'
+      await uploadExport(project.value, floor.id, visibleLayers)
+      statusMessage.value = 'Export downloaded locally and logged to Firestore'
     } catch (error) {
-      statusMessage.value = error instanceof Error ? error.message : 'Export uploaded failed'
+      statusMessage.value = error instanceof Error ? error.message : 'Export logging failed'
     }
   }
 
   return {
     activeLayerType,
     cancelDraft,
+    canEdit,
     cloneCurrentTemplate,
     commitDraft,
     createTemplate,
@@ -414,6 +619,7 @@ export const usePlannerStore = defineStore('planner', () => {
     initialize,
     initialized,
     layerVisibility,
+    liveConnectionVerified,
     persist,
     project,
     selectedEntity,
@@ -431,9 +637,16 @@ export const usePlannerStore = defineStore('planner', () => {
     toolMode,
     updateSelectedEntity,
     updateSelectedEntityMetadata,
+    updateSelectedEntityVertex,
     updateVertex,
+    updateGridSettings,
+    updatePlotVertex,
     visibleTemplates,
     addVertexToDraft,
     assignTemplate,
+    cleanup() {
+      stopProjectSubscription?.()
+      stopProjectSubscription = undefined
+    },
   }
 })

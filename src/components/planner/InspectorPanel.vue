@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { GridPoint, PlanEntity, SyncState, Template, ToolMode } from '../../types/planner'
+import { toDisplayValue } from '../../lib/geometry'
+import type { GridPoint, MeasurementUnit, PlanEntity, SyncState, Template, ToolMode } from '../../types/planner'
 
 const props = defineProps<{
   currentTemplate: Template | null
   draftVertices: GridPoint[]
+  editable: boolean
   firebaseEnabled: boolean
+  gridUnit: MeasurementUnit
   selectedEntity: PlanEntity | null
   statusMessage: string
   syncState: SyncState
@@ -17,6 +20,7 @@ const emit = defineEmits<{
   commitDraft: []
   deleteSelectedEntity: []
   updateSelectedEntity: [patch: Partial<PlanEntity>]
+  updateSelectedEntityVertex: [vertexIndex: number, axis: 'x' | 'y', rawValue: number]
 }>()
 
 const canCommitDraft = computed(() => {
@@ -30,6 +34,10 @@ const canCommitDraft = computed(() => {
 
   return false
 })
+
+function displayVertexValue(vertex: GridPoint, axis: 'x' | 'y') {
+  return toDisplayValue(vertex[axis], props.gridUnit)
+}
 </script>
 
 <template>
@@ -54,7 +62,7 @@ const canCommitDraft = computed(() => {
       <h3>{{ toolMode === 'polygon' ? 'Polygon draft' : 'Path draft' }}</h3>
       <p class="muted">{{ draftVertices.length }} snapped vertices</p>
       <div class="button-row">
-        <button class="button button--primary" :disabled="!canCommitDraft" @click="emit('commitDraft')">
+        <button class="button button--primary" :disabled="!props.editable || !canCommitDraft" @click="emit('commitDraft')">
           Commit
         </button>
         <button class="button button--ghost" @click="emit('cancelDraft')">
@@ -73,6 +81,7 @@ const canCommitDraft = computed(() => {
           name="entity-label"
           :value="selectedEntity.label"
           type="text"
+          :disabled="!editable"
           @input="emit('updateSelectedEntity', { label: ($event.target as HTMLInputElement).value })"
         />
       </label>
@@ -83,6 +92,7 @@ const canCommitDraft = computed(() => {
           name="entity-description"
           rows="4"
           :value="selectedEntity.description"
+          :disabled="!editable"
           @input="emit('updateSelectedEntity', { description: ($event.target as HTMLTextAreaElement).value })"
         />
       </label>
@@ -94,6 +104,7 @@ const canCommitDraft = computed(() => {
           :value="selectedEntity.symbolKey ?? ''"
           type="text"
           placeholder="column, panel, tank"
+          :disabled="!editable"
           @input="emit('updateSelectedEntity', { symbolKey: ($event.target as HTMLInputElement).value || undefined })"
         />
       </label>
@@ -104,17 +115,47 @@ const canCommitDraft = computed(() => {
           name="entity-stroke"
           :value="selectedEntity.style.stroke"
           type="color"
+          :disabled="!editable"
           @input="emit('updateSelectedEntity', { style: { ...selectedEntity.style, stroke: ($event.target as HTMLInputElement).value } })"
         />
       </label>
 
-      <ul class="vertex-list">
-        <li v-for="(vertex, index) in selectedEntity.vertices" :key="`${selectedEntity.id}-${index}`">
-          V{{ index + 1 }} → {{ vertex.x }}, {{ vertex.y }}
-        </li>
-      </ul>
+      <div class="vertex-editor">
+        <p class="eyebrow">Vertices</p>
+        <div
+          v-for="(vertex, index) in selectedEntity.vertices"
+          :key="`${selectedEntity.id}-${index}`"
+          class="vertex-row"
+        >
+          <span class="vertex-row__label">V{{ index + 1 }}</span>
+          <div class="field-grid">
+            <label class="field field--compact">
+              <span>X</span>
+              <input
+                :name="`vertex-${index + 1}-x`"
+                type="number"
+                step="0.01"
+                :value="displayVertexValue(vertex, 'x')"
+                :disabled="!editable"
+                @change="emit('updateSelectedEntityVertex', index, 'x', Number(($event.target as HTMLInputElement).value))"
+              />
+            </label>
+            <label class="field field--compact">
+              <span>Y</span>
+              <input
+                :name="`vertex-${index + 1}-y`"
+                type="number"
+                step="0.01"
+                :value="displayVertexValue(vertex, 'y')"
+                :disabled="!editable"
+                @change="emit('updateSelectedEntityVertex', index, 'y', Number(($event.target as HTMLInputElement).value))"
+              />
+            </label>
+          </div>
+        </div>
+      </div>
 
-      <button class="button button--danger" @click="emit('deleteSelectedEntity')">
+      <button class="button button--danger" :disabled="!editable" @click="emit('deleteSelectedEntity')">
         Delete entity
       </button>
     </section>

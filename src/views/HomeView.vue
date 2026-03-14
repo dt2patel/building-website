@@ -3,12 +3,13 @@ import {
   IonContent,
   IonPage,
 } from '@ionic/vue'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import EditorCanvas from '../components/planner/EditorCanvas.vue'
 import InspectorPanel from '../components/planner/InspectorPanel.vue'
+import { toDisplayValue } from '../lib/geometry'
 import { isFirebaseConfigured } from '../services/firebase'
 import { usePlannerStore } from '../stores/plannerStore'
-import { layerLabels, layerOrder, type ToolMode } from '../types/planner'
+import { layerLabels, layerOrder, type MeasurementUnit, type ToolMode } from '../types/planner'
 
 const planner = usePlannerStore()
 const firebaseEnabled = isFirebaseConfigured()
@@ -17,11 +18,43 @@ const toolModes: ToolMode[] = ['select', 'point', 'polyline', 'polygon']
 
 onMounted(async () => {
   await planner.initialize()
+  window.addEventListener('keydown', handleGlobalKeydown)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
+  planner.cleanup()
 })
 
 const activeLayerTemplates = computed(
   () => planner.templatesByLayer[planner.activeLayerType],
 )
+
+function plotVertexValue(index: number, axis: 'x' | 'y') {
+  const vertex = planner.project.plotBoundary[index]
+  return vertex ? toDisplayValue(vertex[axis], planner.project.gridUnit) : 0
+}
+
+function updateGridUnit(event: Event) {
+  const nextUnit = (event.target as HTMLSelectElement).value as MeasurementUnit
+  planner.updateGridSettings(nextUnit, planner.project.gridSpacing)
+}
+
+function updateGridSpacing(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value)
+  if (!Number.isNaN(value) && value > 0) {
+    planner.updateGridSettings(planner.project.gridUnit, value)
+  }
+}
+
+function updatePlotVertex(index: number, axis: 'x' | 'y', event: Event) {
+  planner.updatePlotVertex(
+    index,
+    axis,
+    Number((event.target as HTMLInputElement).value),
+    planner.project.gridUnit,
+  )
+}
 
 async function exportCurrentFloor() {
   const svg = editorCanvas.value?.getSvgElement()
@@ -30,6 +63,27 @@ async function exportCurrentFloor() {
   }
 
   await planner.exportActiveFloor(svg)
+}
+
+function handleGlobalKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Delete' && event.key !== 'Backspace') {
+    return
+  }
+
+  const target = event.target as HTMLElement | null
+  const tagName = target?.tagName
+  const isFormField =
+    tagName === 'INPUT' ||
+    tagName === 'TEXTAREA' ||
+    tagName === 'SELECT' ||
+    target?.isContentEditable
+
+  if (isFormField || !planner.selectedEntity || !planner.canEdit) {
+    return
+  }
+
+  event.preventDefault()
+  planner.deleteSelectedEntity()
 }
 </script>
 
@@ -64,6 +118,72 @@ async function exportCurrentFloor() {
               >
                 {{ floor.name }}
               </button>
+            </div>
+          </section>
+
+          <section class="panel-card">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Project Geometry</p>
+                <h2>Plot and grid settings</h2>
+              </div>
+            </div>
+
+            <div class="field-grid">
+              <label class="field">
+                <span>Grid unit</span>
+                <select
+                  name="grid-unit"
+                  :value="planner.project.gridUnit"
+                  :disabled="!planner.canEdit"
+                  @change="updateGridUnit"
+                >
+                  <option value="m">Meters</option>
+                  <option value="cm">Centimeters</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span>Grid spacing</span>
+                <input
+                  name="grid-spacing"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  :value="planner.project.gridSpacing"
+                  :disabled="!planner.canEdit"
+                  @change="updateGridSpacing"
+                />
+              </label>
+            </div>
+
+            <div class="plot-vertex-grid">
+              <label
+                v-for="(_, index) in planner.project.plotBoundary"
+                :key="`plot-vertex-${index}`"
+                class="plot-vertex"
+              >
+                <span>P{{ index + 1 }}</span>
+                <div class="field-grid">
+                  <input
+                    :name="`plot-${index + 1}-x`"
+                    type="number"
+                    step="0.01"
+                    :value="plotVertexValue(index, 'x')"
+                    :disabled="!planner.canEdit"
+                    @change="updatePlotVertex(index, 'x', $event)"
+                  />
+                  <input
+                    :name="`plot-${index + 1}-y`"
+                    type="number"
+                    step="0.01"
+                    :value="plotVertexValue(index, 'y')"
+                    :disabled="!planner.canEdit"
+                    @change="updatePlotVertex(index, 'y', $event)"
+                  />
+                </div>
+                <small>{{ planner.project.gridUnit === 'm' ? 'x / y in meters' : 'x / y in centimeters' }}</small>
+              </label>
             </div>
           </section>
 
@@ -111,6 +231,7 @@ async function exportCurrentFloor() {
               <select
                 name="layer-template"
                 :value="planner.currentTemplateId ?? ''"
+                :disabled="!planner.canEdit"
                 @change="planner.assignTemplate(planner.activeLayerType, ($event.target as HTMLSelectElement).value || null)"
               >
                 <option value="">No template assigned</option>
@@ -125,8 +246,8 @@ async function exportCurrentFloor() {
             </label>
 
             <div class="button-row">
-              <button class="button button--ghost" @click="planner.createTemplate()">New</button>
-              <button class="button button--ghost" :disabled="!planner.currentTemplate" @click="planner.cloneCurrentTemplate()">
+              <button class="button button--ghost" :disabled="!planner.canEdit" @click="planner.createTemplate()">New</button>
+              <button class="button button--ghost" :disabled="!planner.canEdit || !planner.currentTemplate" @click="planner.cloneCurrentTemplate()">
                 Clone
               </button>
             </div>
@@ -141,6 +262,7 @@ async function exportCurrentFloor() {
                 :key="tool"
                 class="tool-button"
                 :class="{ 'tool-button--active': planner.toolMode === tool }"
+                :disabled="tool !== 'select' && !planner.canEdit"
                 @click="planner.setToolMode(tool)"
               >
                 {{ tool }}
@@ -149,7 +271,8 @@ async function exportCurrentFloor() {
 
             <div class="toolbar__group toolbar__group--meta">
               <span class="status-pill" :class="`status-pill--${planner.syncState}`">{{ planner.syncState }}</span>
-              <button class="button button--ghost" @click="planner.persist()">Sync now</button>
+              <p v-if="!planner.canEdit" class="toolbar__notice">Read-only until a live Firestore session is verified.</p>
+              <button class="button button--ghost" :disabled="!firebaseEnabled" @click="planner.persist()">Sync now</button>
               <button class="button button--primary" @click="exportCurrentFloor">Export PDF</button>
             </div>
           </div>
@@ -163,6 +286,7 @@ async function exportCurrentFloor() {
             :selected-entity-id="planner.selectedEntityId"
             :tool-mode="planner.toolMode"
             :visible-templates="planner.visibleTemplates"
+            :editable="planner.canEdit"
             @add-vertex="planner.addVertexToDraft"
             @select-entity="planner.selectEntity"
             @update-vertex="planner.updateVertex"
@@ -173,6 +297,8 @@ async function exportCurrentFloor() {
           :current-template="planner.currentTemplate"
           :draft-vertices="planner.draftVertices"
           :firebase-enabled="firebaseEnabled"
+          :grid-unit="planner.project.gridUnit"
+          :editable="planner.canEdit"
           :selected-entity="planner.selectedEntity"
           :status-message="planner.statusMessage"
           :sync-state="planner.syncState"
@@ -181,6 +307,7 @@ async function exportCurrentFloor() {
           @commit-draft="planner.commitDraft"
           @delete-selected-entity="planner.deleteSelectedEntity"
           @update-selected-entity="planner.updateSelectedEntity"
+          @update-selected-entity-vertex="(vertexIndex, axis, rawValue) => planner.updateSelectedEntityVertex(vertexIndex, axis, rawValue, planner.project.gridUnit)"
         />
       </main>
     </ion-content>
