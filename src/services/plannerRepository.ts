@@ -1,5 +1,6 @@
 import {
   collection,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -12,7 +13,7 @@ import {
 import { createSeedProject } from '../config/seedProject'
 import { cloneJson } from '../lib/geometry'
 import { getFirebaseServices, isFirebaseConfigured } from './firebase'
-import type { ExportRecord, LayerType, PlanEntity, Project } from '../types/planner'
+import { layerOrder, type ExportRecord, type LayerType, type PlanEntity, type Project, type Template } from '../types/planner'
 
 const localStorageKey = 'blueprint-planner:project'
 const seedProjectId = createSeedProject().id
@@ -21,6 +22,12 @@ export interface ProjectRealtimeState {
   exists: boolean
   hasPendingWrites: boolean
   live: boolean
+}
+
+interface RemoteTemplate extends Omit<Template, 'entities'> {
+  entities?: PlanEntity[]
+  entitiesById?: Record<string, PlanEntity>
+  entityOrder?: string[]
 }
 
 function getLocalProject(): Project | null {
@@ -60,6 +67,40 @@ function normalizeEntityStyle(entity: PlanEntity): PlanEntity {
   }
 }
 
+function mapTemplateEntities(template: RemoteTemplate): PlanEntity[] {
+  if (template.entitiesById) {
+    const entityMap = Object.fromEntries(
+      Object.entries(template.entitiesById).map(([entityId, entity]) => [
+        entityId,
+        normalizeEntityStyle({
+          ...entity,
+          id: entity.id ?? entityId,
+        }),
+      ]),
+    )
+
+    const orderedIds = template.entityOrder?.filter((entityId) => entityMap[entityId]) ?? []
+    const unorderedIds = Object.keys(entityMap).filter((entityId) => !orderedIds.includes(entityId))
+
+    return [...orderedIds, ...unorderedIds].map((entityId) => entityMap[entityId])
+  }
+
+  return (template.entities ?? []).map((entity) => normalizeEntityStyle(entity))
+}
+
+function serializeTemplate(template: Template): RemoteTemplate {
+  return {
+    id: template.id,
+    name: template.name,
+    layerType: template.layerType,
+    version: template.version,
+    status: template.status,
+    updatedAt: template.updatedAt,
+    entityOrder: template.entities.map((entity) => entity.id),
+    entitiesById: Object.fromEntries(template.entities.map((entity) => [entity.id, entity])),
+  }
+}
+
 function normalizeProject(project: Project): Project {
   const seed = createSeedProject()
   const schemaVersion = project.schemaVersion ?? seed.schemaVersion
@@ -89,7 +130,7 @@ function normalizeProject(project: Project): Project {
     }),
     templates: (project.templates ?? seed.templates).map((template) => ({
       ...template,
-      entities: template.entities.map((entity) => normalizeEntityStyle(entity)),
+      entities: mapTemplateEntities(template as RemoteTemplate),
     })),
   }
 }
@@ -260,8 +301,49 @@ export async function loadProject(): Promise<Project> {
   return seed
 }
 
-export async function saveProject(project: Project): Promise<void> {
+function getChangedRootFields(previousProject: Project | null, nextProject: Project) {
+  const patch: Record<string, unknown> = {}
+  const rootFields: Array<keyof Project> = [
+    'schemaVersion',
+    'id',
+    'name',
+    'units',
+    'gridUnit',
+    'gridSpacing',
+    'plotBoundary',
+    'buildingBoundary',
+    'fixedStructures',
+    'createdAt',
+    'updatedAt',
+  ]
+
+  rootFields.forEach((field) => {
+    if (JSON.stringify(previousProject?.[field]) !== JSON.stringify(nextProject[field])) {
+      patch[field] = cloneJson(nextProject[field])
+    }
+  })
+
+  return patch
+}
+
+function getProjectTemplates(project: Project) {
+  return Object.fromEntries(project.templates.map((template) => [template.id, template]))
+}
+
+function getProjectFloors(project: Project) {
+  return Object.fromEntries(project.floors.map((floor) => [floor.id, floor]))
+}
+
+function jsonEquals(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+export async function saveProject(
+  previousProject: Project | null,
+  project: Project,
+): Promise<void> {
   const snapshot = cloneJson(project)
+  const previousSnapshot = previousProject ? cloneJson(previousProject) : null
   saveLocalProject(snapshot)
 
   const services = getFirebaseServices()
@@ -271,27 +353,102 @@ export async function saveProject(project: Project): Promise<void> {
 
   const batch = writeBatch(services.db)
   const projectRef = doc(services.db, 'projects', snapshot.id)
-  batch.set(projectRef, {
-    schemaVersion: snapshot.schemaVersion,
-    id: snapshot.id,
-    name: snapshot.name,
-    units: snapshot.units,
-    gridUnit: snapshot.gridUnit,
-    gridSpacing: snapshot.gridSpacing,
-    plotBoundary: snapshot.plotBoundary,
-    buildingBoundary: snapshot.buildingBoundary,
-    fixedStructures: snapshot.fixedStructures,
-    createdAt: snapshot.createdAt,
-    updatedAt: snapshot.updatedAt,
-  })
+  let hasWrites = false
+  const rootPatch = getChangedRootFields(previousSnapshot, snapshot)
+  if (Object.keys(rootPatch).length > 0 || !previousSnapshot) {
+    batch.set(projectRef, rootPatch, { merge: true })
+    hasWrites = true
+  }
 
+  const previousFloors = previousSnapshot ? getProjectFloors(previousSnapshot) : {}
   snapshot.floors.forEach((floor) => {
-    batch.set(doc(services.db, 'projects', snapshot.id, 'floors', floor.id), floor)
+    const previousFloor = previousFloors[floor.id]
+    const floorRef = doc(services.db, 'projects', snapshot.id, 'floors', floor.id)
+
+    if (!previousFloor) {
+      batch.set(floorRef, floor)
+      hasWrites = true
+      return
+    }
+
+    const floorPatch: Record<string, unknown> = {}
+    if (previousFloor.name !== floor.name) {
+      floorPatch.name = floor.name
+    }
+    if (previousFloor.index !== floor.index) {
+      floorPatch.index = floor.index
+    }
+    if (previousFloor.floorType !== floor.floorType) {
+      floorPatch.floorType = floor.floorType
+    }
+
+    layerOrder.forEach((layerType) => {
+      if (previousFloor.templateAssignments[layerType] !== floor.templateAssignments[layerType]) {
+        floorPatch[`templateAssignments.${layerType}`] = floor.templateAssignments[layerType]
+      }
+    })
+
+    if (Object.keys(floorPatch).length > 0) {
+      batch.set(floorRef, floorPatch, { merge: true })
+      hasWrites = true
+    }
   })
 
+  const previousTemplates = previousSnapshot ? getProjectTemplates(previousSnapshot) : {}
   snapshot.templates.forEach((template) => {
-    batch.set(doc(services.db, 'projects', snapshot.id, 'templates', template.id), template)
+    const previousTemplate = previousTemplates[template.id]
+    const templateRef = doc(services.db, 'projects', snapshot.id, 'templates', template.id)
+
+    if (!previousTemplate) {
+      batch.set(templateRef, serializeTemplate(template))
+      hasWrites = true
+      return
+    }
+
+    const templatePatch: Record<string, unknown> = {}
+    ;(['name', 'layerType', 'version', 'status', 'updatedAt'] as const).forEach((field) => {
+      if (!jsonEquals(previousTemplate[field], template[field])) {
+        templatePatch[field] = template[field]
+      }
+    })
+
+    const previousEntityOrder = previousTemplate.entities.map((entity) => entity.id)
+    const currentEntityOrder = template.entities.map((entity) => entity.id)
+    if (!jsonEquals(previousEntityOrder, currentEntityOrder)) {
+      templatePatch.entityOrder = currentEntityOrder
+    }
+
+    const previousEntities = Object.fromEntries(previousTemplate.entities.map((entity) => [entity.id, entity]))
+    const currentEntities = Object.fromEntries(template.entities.map((entity) => [entity.id, entity]))
+
+    currentEntityOrder.forEach((entityId) => {
+      if (!jsonEquals(previousEntities[entityId], currentEntities[entityId])) {
+        templatePatch[`entitiesById.${entityId}`] = currentEntities[entityId]
+      }
+    })
+
+    previousEntityOrder.forEach((entityId) => {
+      if (!currentEntities[entityId]) {
+        templatePatch[`entitiesById.${entityId}`] = deleteField()
+      }
+    })
+
+    if (Object.keys(templatePatch).length > 0) {
+      batch.set(templateRef, templatePatch, { merge: true })
+      hasWrites = true
+    }
   })
+
+  Object.keys(previousTemplates)
+    .filter((templateId) => !snapshot.templates.some((template) => template.id === templateId))
+    .forEach((templateId) => {
+      batch.delete(doc(services.db, 'projects', snapshot.id, 'templates', templateId))
+      hasWrites = true
+    })
+
+  if (!hasWrites) {
+    return
+  }
 
   await batch.commit()
 }

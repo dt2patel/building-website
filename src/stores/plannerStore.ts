@@ -31,8 +31,21 @@ function timestamp() {
   return new Date().toISOString()
 }
 
+function parseTimestamp(value: string | undefined): number {
+  if (!value) {
+    return Number.NEGATIVE_INFINITY
+  }
+
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed
+}
+
 function entityLabel(layerType: LayerType, geometryType: PlanEntity['geometryType'], count: number) {
   return `${layerType} ${geometryType} ${count}`
+}
+
+function projectsMatch(left: Project, right: Project): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
 }
 
 export const usePlannerStore = defineStore('planner', () => {
@@ -59,6 +72,8 @@ export const usePlannerStore = defineStore('planner', () => {
   let stopProjectSubscription: (() => void) | undefined
   const liveConnectionVerified = ref(false)
   const hasPendingWrites = ref(false)
+  const remoteProjectExists = ref(false)
+  const lastSyncedProject = ref<Project | null>(null)
 
   const selectedFloor = computed(
     () => project.value.floors.find((floor) => floor.id === selectedFloorId.value) ?? project.value.floors[0],
@@ -113,6 +128,24 @@ export const usePlannerStore = defineStore('planner', () => {
   }
 
   function applyProjectSnapshot(nextProject: Project) {
+    const currentUpdatedAt = parseTimestamp(project.value.updatedAt)
+    const nextUpdatedAt = parseTimestamp(nextProject.updatedAt)
+    const hasLocalEdits = lastSyncedProject.value
+      ? !projectsMatch(project.value, lastSyncedProject.value)
+      : false
+
+    if (nextUpdatedAt < currentUpdatedAt) {
+      return
+    }
+
+    if (
+      hasLocalEdits &&
+      nextUpdatedAt === currentUpdatedAt &&
+      !projectsMatch(nextProject, project.value)
+    ) {
+      return
+    }
+
     const nextSelectedFloorId = nextProject.floors.some((floor) => floor.id === selectedFloorId.value)
       ? selectedFloorId.value
       : nextProject.floors[0]?.id ?? ''
@@ -123,6 +156,7 @@ export const usePlannerStore = defineStore('planner', () => {
 
     project.value = nextProject
     selectedFloorId.value = nextSelectedFloorId
+    lastSyncedProject.value = cloneJson(nextProject)
 
     if (!entityStillExists) {
       selectedEntityId.value = null
@@ -132,6 +166,7 @@ export const usePlannerStore = defineStore('planner', () => {
   function updateRealtimeState(state: { exists: boolean; hasPendingWrites: boolean; live: boolean }) {
     hasPendingWrites.value = state.hasPendingWrites
     liveConnectionVerified.value = state.live
+    remoteProjectExists.value = state.exists
 
     if (!firebaseEnabled) {
       syncState.value = 'local'
@@ -194,6 +229,7 @@ export const usePlannerStore = defineStore('planner', () => {
 
     project.value = await loadProject()
     selectedFloorId.value = project.value.floors[0]?.id ?? ''
+    lastSyncedProject.value = null
     initialized.value = true
     if (!firebaseEnabled) {
       syncState.value = 'local'
@@ -225,7 +261,10 @@ export const usePlannerStore = defineStore('planner', () => {
     statusMessage.value = 'Syncing live changes to Firebase...'
 
     try {
-      await saveProject(project.value)
+      await saveProject(
+        remoteProjectExists.value ? lastSyncedProject.value : null,
+        project.value,
+      )
       syncState.value = hasPendingWrites.value ? 'syncing' : 'synced'
       statusMessage.value = hasPendingWrites.value
         ? 'Syncing live changes to Firebase...'

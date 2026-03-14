@@ -13,6 +13,11 @@ const repositoryState = vi.hoisted(() => ({
     hasPendingWrites: false,
     live: true,
   },
+  handlers: null as null | {
+    onProject: (project: ReturnType<typeof createSeedProject>) => void
+    onStateChange: (state: { exists: boolean; hasPendingWrites: boolean; live: boolean }) => void
+    onError: (error: Error) => void
+  },
 }))
 
 vi.mock('../services/plannerRepository', async () => {
@@ -24,6 +29,7 @@ vi.mock('../services/plannerRepository', async () => {
       onStateChange: (state: typeof repositoryState.realtimeState) => void
       onError: (error: Error) => void
     }) => {
+      repositoryState.handlers = handlers
       handlers.onProject(createSeedProject())
       handlers.onStateChange(repositoryState.realtimeState)
       return vi.fn()
@@ -49,6 +55,7 @@ describe('plannerStore workflow coverage', () => {
       hasPendingWrites: false,
       live: true,
     }
+    repositoryState.handlers = null
   })
 
   afterEach(() => {
@@ -153,5 +160,17 @@ describe('plannerStore workflow coverage', () => {
     expect(store.canEdit).toBe(false)
     expect(store.project.templates).toHaveLength(previousTemplateCount)
     expect(store.statusMessage).toContain('Read-only')
+  })
+
+  it('keeps a local vertex move when a stale Firestore snapshot arrives before save', async () => {
+    const store = usePlannerStore()
+    await store.initialize()
+
+    store.selectEntity({ entityId: 'col-1-1', layerType: 'structural' })
+    store.updateSelectedEntityVertex(0, 'x', 7.01, store.project.gridUnit)
+
+    repositoryState.handlers?.onProject(createSeedProject())
+
+    expect(store.selectedEntity?.vertices[0]?.x).toBe(7.01)
   })
 })
