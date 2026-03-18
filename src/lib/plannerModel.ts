@@ -2,7 +2,10 @@ import { cloneJson } from './geometry'
 import { createSeedProject } from '../config/seedProject'
 import {
   createEmptyAssignments,
+  createEmptyExteriorAssignments,
   layerColors,
+  setExteriorAssignment,
+  type CardinalSide,
   type GeometryType,
   type LayerType,
   type PlanEntity,
@@ -79,6 +82,7 @@ export function createProjectStateFromSeed(): ProjectState {
     fixedStructures: cloneJson(seed.fixedStructures),
     floors: cloneJson(seed.floors),
     templates: cloneJson(seed.templates),
+    exteriorTemplates: cloneJson(seed.exteriorTemplates),
     createdAt: seed.createdAt,
     updatedAt: seed.updatedAt,
   }
@@ -103,6 +107,7 @@ export function toProjectState(project: Project): ProjectState {
     fixedStructures: cloneJson(project.fixedStructures),
     floors: cloneJson(project.floors),
     templates: cloneJson(project.templates),
+    exteriorTemplates: cloneJson(project.exteriorTemplates),
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
   }
@@ -158,4 +163,34 @@ export function projectsMatch(left: Project, right: Project): boolean {
 
 export function cloneFloorAssignments() {
   return createEmptyAssignments()
+}
+
+export function cloneExteriorAssignments() {
+  return createEmptyExteriorAssignments()
+}
+
+export function defaultFloorHeight(floorType: Project['floors'][number]['floorType']): number {
+  switch (floorType) {
+    case 'garage':
+      return 3.5
+    case 'residential':
+      return 3
+    case 'office':
+      return 3.2
+  }
+}
+
+export function normalizeHeightMeters(value: number): number {
+  return Number(value.toFixed(2))
+}
+
+export function clearExteriorAssignments(floor: Project['floors'][number]) {
+  setExteriorAssignment(floor.exterior, 'east', null)
+  setExteriorAssignment(floor.exterior, 'west', null)
+  setExteriorAssignment(floor.exterior, 'north', null)
+  setExteriorAssignment(floor.exterior, 'south', null)
+}
+
+export function sideLabel(side: CardinalSide): string {
+  return side.slice(0, 1).toUpperCase() + side.slice(1)
 }

@@ -1,6 +1,9 @@
 import {
   createEmptyAssignments,
+  createEmptyExteriorAssignments,
   layerColors,
+  type CardinalSide,
+  type ExteriorTemplate,
   type Floor,
   type GridPoint,
   type LayerType,
@@ -133,7 +136,9 @@ function buildFloors(): Floor[] {
       name: layout.name,
       index: index + 1,
       floorType: layout.floorType,
+      heightMeters: layout.floorType === 'garage' ? 3.5 : 3.2,
       templateAssignments: assignments,
+      exterior: createEmptyExteriorAssignments(),
     }
   })
 }
@@ -370,6 +375,27 @@ function buildTemplates(timestamp: string): Template[] {
   ]
 }
 
+function buildExteriorTemplates(timestamp: string): ExteriorTemplate[] {
+  const sides: CardinalSide[] = ['east', 'west', 'north', 'south']
+  const heights = [
+    { suffix: 'parking', heightMeters: 3.5 },
+    { suffix: 'office', heightMeters: 3.2 },
+  ]
+
+  return sides.flatMap((side) =>
+    heights.map((height) => ({
+      id: `ext-${side}-${height.suffix}`,
+      name: `${side[0].toUpperCase()}${side.slice(1)} ${height.suffix}`,
+      side,
+      heightMeters: height.heightMeters,
+      version: 1,
+      status: 'active' as const,
+      updatedAt: timestamp,
+      entities: [],
+    })),
+  )
+}
+
 export function createSeedProject(): Project {
   const timestamp = now()
 
@@ -395,6 +421,7 @@ export function createSeedProject(): Project {
     fixedStructures: [],
     floors: buildFloors(),
     templates: buildTemplates(timestamp),
+    exteriorTemplates: buildExteriorTemplates(timestamp),
     createdAt: timestamp,
     updatedAt: timestamp,
   }

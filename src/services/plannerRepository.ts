@@ -25,6 +25,7 @@ import { cloneJson } from '../lib/geometry'
 import {
   LEGACY_PROJECT_ID,
   autoSaveName,
+  defaultFloorHeight,
   createProjectStateFromSeed,
   normalizeUsername,
   parseTimestamp,
@@ -40,7 +41,8 @@ import {
   isFirebaseConfigured,
 } from './firebase'
 import {
-  layerOrder,
+  createEmptyExteriorAssignments,
+  type ExteriorTemplate,
   type ExportRecord,
   type Floor,
   type LayerType,
@@ -65,11 +67,15 @@ export interface ProjectRealtimeState {
   live: boolean
 }
 
-interface RemoteTemplate extends Omit<Template, 'entities'> {
+interface EntityContainer {
   entities?: PlanEntity[]
   entitiesById?: Record<string, PlanEntity>
   entityOrder?: string[]
 }
+
+interface RemoteTemplate extends Omit<Template, 'entities'>, EntityContainer {}
+
+interface RemoteExteriorTemplate extends Omit<ExteriorTemplate, 'entities'>, EntityContainer {}
 
 function normalizeUserProfile(data: UserProfile): UserProfile {
   return {
@@ -144,7 +150,7 @@ function normalizeEntityStyle(entity: PlanEntity): PlanEntity {
   }
 }
 
-function mapTemplateEntities(template: RemoteTemplate): PlanEntity[] {
+function mapTemplateEntities(template: EntityContainer): PlanEntity[] {
   if (template.entitiesById) {
     const entityMap = Object.fromEntries(
       Object.entries(template.entitiesById).map(([entityId, entity]) => [
@@ -186,6 +192,20 @@ function serializeTemplate(template: Template): RemoteTemplate {
   }
 }
 
+function serializeExteriorTemplate(template: ExteriorTemplate): RemoteExteriorTemplate {
+  return {
+    id: template.id,
+    name: template.name,
+    side: template.side,
+    heightMeters: template.heightMeters,
+    version: template.version,
+    status: template.status,
+    updatedAt: template.updatedAt,
+    entityOrder: template.entities.map((entity) => entity.id),
+    entitiesById: Object.fromEntries(template.entities.map((entity) => [entity.id, entity])),
+  }
+}
+
 function normalizeProjectState(state: ProjectState): ProjectState {
   const seed = createProjectStateFromSeed()
   const schemaVersion = state.schemaVersion ?? seed.schemaVersion
@@ -204,9 +224,14 @@ function normalizeProjectState(state: ProjectState): ProjectState {
       return {
         ...seedFloor,
         ...floor,
+        heightMeters: floor.heightMeters ?? defaultFloorHeight(floor.floorType ?? seedFloor.floorType),
         templateAssignments: {
           ...seedFloor.templateAssignments,
           ...floor.templateAssignments,
+        },
+        exterior: {
+          ...createEmptyExteriorAssignments(),
+          ...(floor.exterior ?? {}),
         },
       }
     }),
@@ -214,10 +239,20 @@ function normalizeProjectState(state: ProjectState): ProjectState {
       ...template,
       entities: mapTemplateEntities(template as RemoteTemplate),
     })),
+    exteriorTemplates: (state.exteriorTemplates ?? []).map((template) => ({
+      ...template,
+      entities: mapTemplateEntities(template as RemoteExteriorTemplate),
+    })),
   }
 }
 
-function toProjectFromSave(meta: ProjectMeta, save: ProjectSaveRecord, floors: Floor[], templates: Template[]): Project {
+function toProjectFromSave(
+  meta: ProjectMeta,
+  save: ProjectSaveRecord,
+  floors: Floor[],
+  templates: Template[],
+  exteriorTemplates: ExteriorTemplate[],
+): Project {
   return withProjectMeta(meta, normalizeProjectState({
     schemaVersion: save.schemaVersion,
     units: save.units,
@@ -228,6 +263,7 @@ function toProjectFromSave(meta: ProjectMeta, save: ProjectSaveRecord, floors: F
     fixedStructures: save.fixedStructures,
     floors,
     templates,
+    exteriorTemplates,
     createdAt: save.createdAt,
     updatedAt: save.updatedAt,
   }))
@@ -277,6 +313,7 @@ async function loadLegacyProject(projectId: string): Promise<Project | null> {
     ...(data as Project),
     floors: floorsSnapshot.docs.map((item) => item.data()) as Floor[],
     templates: templatesSnapshot.docs.map((item) => item.data()) as Template[],
+    exteriorTemplates: [],
   }) as Project
 }
 
@@ -303,6 +340,13 @@ async function writeProjectState(
 
   state.templates.forEach((template) => {
     batch.set(doc(services.db, 'projects', projectId, 'saves', saveId, 'templates', template.id), serializeTemplate(template))
+  })
+
+  state.exteriorTemplates.forEach((template) => {
+    batch.set(
+      doc(services.db, 'projects', projectId, 'saves', saveId, 'exteriorTemplates', template.id),
+      serializeExteriorTemplate(template),
+    )
   })
 }
 
@@ -893,9 +937,10 @@ export async function loadSave(projectId: string, saveId: string, userId?: strin
     throw new Error('Save not found.')
   }
 
-  const [floorsSnapshot, templatesSnapshot] = await Promise.all([
+  const [floorsSnapshot, templatesSnapshot, exteriorTemplatesSnapshot] = await Promise.all([
     getDocs(collection(services.db, 'projects', projectId, 'saves', saveId, 'floors')),
     getDocs(collection(services.db, 'projects', projectId, 'saves', saveId, 'templates')),
+    getDocs(collection(services.db, 'projects', projectId, 'saves', saveId, 'exteriorTemplates')),
   ])
 
   const remoteProject = toProjectFromSave(
@@ -903,6 +948,10 @@ export async function loadSave(projectId: string, saveId: string, userId?: strin
     saveSnapshot.data() as ProjectSaveRecord,
     floorsSnapshot.docs.map((item) => item.data()) as Floor[],
     templatesSnapshot.docs.map((item) => item.data() as RemoteTemplate).map((item) => ({
+      ...item,
+      entities: mapTemplateEntities(item),
+    })),
+    exteriorTemplatesSnapshot.docs.map((item) => item.data() as RemoteExteriorTemplate).map((item) => ({
       ...item,
       entities: mapTemplateEntities(item),
     })),
@@ -945,14 +994,16 @@ export function subscribeToSave(
   const saveRef = doc(services.db, 'projects', projectId, 'saves', saveId)
   const floorsRef = collection(services.db, 'projects', projectId, 'saves', saveId, 'floors')
   const templatesRef = collection(services.db, 'projects', projectId, 'saves', saveId, 'templates')
+  const exteriorTemplatesRef = collection(services.db, 'projects', projectId, 'saves', saveId, 'exteriorTemplates')
 
   let projectSnapshot: Awaited<ReturnType<typeof getDoc>> | null = null
   let saveSnapshot: Awaited<ReturnType<typeof getDoc>> | null = null
   let floorsSnapshot: QuerySnapshot | null = null
   let templatesSnapshot: QuerySnapshot | null = null
+  let exteriorTemplatesSnapshot: QuerySnapshot | null = null
 
   function emitState() {
-    if (!projectSnapshot || !saveSnapshot || !floorsSnapshot || !templatesSnapshot) {
+    if (!projectSnapshot || !saveSnapshot || !floorsSnapshot || !templatesSnapshot || !exteriorTemplatesSnapshot) {
       return
     }
 
@@ -960,12 +1011,14 @@ export function subscribeToSave(
       projectSnapshot.metadata.hasPendingWrites ||
       saveSnapshot.metadata.hasPendingWrites ||
       floorsSnapshot.metadata.hasPendingWrites ||
-      templatesSnapshot.metadata.hasPendingWrites
+      templatesSnapshot.metadata.hasPendingWrites ||
+      exteriorTemplatesSnapshot.metadata.hasPendingWrites
     const live =
       !projectSnapshot.metadata.fromCache &&
       !saveSnapshot.metadata.fromCache &&
       !floorsSnapshot.metadata.fromCache &&
-      !templatesSnapshot.metadata.fromCache
+      !templatesSnapshot.metadata.fromCache &&
+      !exteriorTemplatesSnapshot.metadata.fromCache
 
     handlers.onStateChange({
       exists: saveSnapshot.exists(),
@@ -983,6 +1036,10 @@ export function subscribeToSave(
         saveSnapshot.data() as ProjectSaveRecord,
         floorsSnapshot.docs.map((item) => item.data()) as Floor[],
         templatesSnapshot.docs.map((item) => item.data() as RemoteTemplate).map((item) => ({
+          ...item,
+          entities: mapTemplateEntities(item),
+        })),
+        exteriorTemplatesSnapshot.docs.map((item) => item.data() as RemoteExteriorTemplate).map((item) => ({
           ...item,
           entities: mapTemplateEntities(item),
         })),
@@ -1006,6 +1063,10 @@ export function subscribeToSave(
     }, handlers.onError),
     onSnapshot(templatesRef, listenOptions, (snapshot) => {
       templatesSnapshot = snapshot
+      emitState()
+    }, handlers.onError),
+    onSnapshot(exteriorTemplatesRef, listenOptions, (snapshot) => {
+      exteriorTemplatesSnapshot = snapshot
       emitState()
     }, handlers.onError),
   ]
@@ -1147,10 +1208,19 @@ export async function saveActiveProjectState(
   const saveRef = doc(services.db, 'projects', options.projectId, 'saves', options.saveId)
   const floorsCollectionRef = collection(services.db, 'projects', options.projectId, 'saves', options.saveId, 'floors')
   const templatesCollectionRef = collection(services.db, 'projects', options.projectId, 'saves', options.saveId, 'templates')
-  const [saveSnapshot, floorsSnapshot, templatesSnapshot] = await Promise.all([
+  const exteriorTemplatesCollectionRef = collection(
+    services.db,
+    'projects',
+    options.projectId,
+    'saves',
+    options.saveId,
+    'exteriorTemplates',
+  )
+  const [saveSnapshot, floorsSnapshot, templatesSnapshot, exteriorTemplatesSnapshot] = await Promise.all([
     getDoc(saveRef),
     getDocs(floorsCollectionRef),
     getDocs(templatesCollectionRef),
+    getDocs(exteriorTemplatesCollectionRef),
   ])
 
   const currentSave = saveSnapshot.exists()
@@ -1196,6 +1266,15 @@ export async function saveActiveProjectState(
   templatesSnapshot.docs.forEach((templateDoc) => {
     if (!nextTemplateIds.has(templateDoc.id)) {
       batch.delete(doc(services.db, 'projects', options.projectId, 'saves', options.saveId, 'templates', templateDoc.id))
+    }
+  })
+
+  const nextExteriorTemplateIds = new Set(snapshot.exteriorTemplates.map((template) => template.id))
+  exteriorTemplatesSnapshot.docs.forEach((templateDoc) => {
+    if (!nextExteriorTemplateIds.has(templateDoc.id)) {
+      batch.delete(
+        doc(services.db, 'projects', options.projectId, 'saves', options.saveId, 'exteriorTemplates', templateDoc.id),
+      )
     }
   })
 

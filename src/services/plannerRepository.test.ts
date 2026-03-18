@@ -82,10 +82,6 @@ function listDocs(path: string) {
     .map(([docPath, data]) => ({ id: docPath.split('/').at(-1) ?? '', data: () => clone(data) }))
 }
 
-function getWrites(path: string) {
-  return firestoreState.batchWrites.filter((entry) => entry.path === path)
-}
-
 vi.mock('firebase/firestore', () => ({
   collection: (_db: unknown, ...segments: string[]) => ({
     path: segments.join('/'),
@@ -259,10 +255,14 @@ describe('plannerRepository', () => {
     previousProject.templates.forEach((template) => {
       firestoreState.docs[`projects/project-1/saves/save-default/templates/${template.id}`] = clone(template) as unknown as Record<string, unknown>
     })
+    previousProject.exteriorTemplates.forEach((template) => {
+      firestoreState.docs[`projects/project-1/saves/save-default/exteriorTemplates/${template.id}`] = clone(template) as unknown as Record<string, unknown>
+    })
     const nextProject = clone(previousProject)
     nextProject.gridSpacing = 8
     nextProject.updatedAt = '2026-03-14T12:00:00.000Z'
     nextProject.floors[0].templateAssignments.structural = 'tpl-structural-next'
+    nextProject.floors[0].exterior.east = 'ext-east-office'
     const plumbingTemplate = nextProject.templates.find((template) => template.id === 'tpl-plumbing-master')
     plumbingTemplate?.entities.forEach((entity) => {
       entity.vertices = entity.vertices.map((vertex) => ({
@@ -286,6 +286,9 @@ describe('plannerRepository', () => {
       updatedAt: '2026-03-14T12:00:00.000Z',
     })
     expect(firestoreState.docs['projects/project-1/saves/save-default/floors/floor-ground']).toMatchObject({
+      exterior: expect.objectContaining({
+        east: 'ext-east-office',
+      }),
       templateAssignments: expect.objectContaining({
         structural: 'tpl-structural-next',
       }),
@@ -345,6 +348,13 @@ describe('plannerRepository', () => {
         entitiesById: Object.fromEntries(template.entities.map((entity) => [entity.id, entity])),
       }
     })
+    project.exteriorTemplates.forEach((template) => {
+      firestoreState.docs[`projects/project-1/saves/save-default/exteriorTemplates/${template.id}`] = {
+        ...clone(template),
+        entityOrder: template.entities.map((entity) => entity.id),
+        entitiesById: Object.fromEntries(template.entities.map((entity) => [entity.id, entity])),
+      }
+    })
 
     const { loadSave } = await import('./plannerRepository')
     const loaded = await loadSave('project-1', 'save-default', 'user-1')
@@ -353,6 +363,62 @@ describe('plannerRepository', () => {
     expect(loaded.name).toBe('Planner Test')
     expect(loaded.floors[0]?.id).toBe('floor-ground')
     expect(loaded.templates.find((template) => template.id === 'tpl-structural-columns')?.entities[0]?.id).toBe('col-1-1')
+    expect(loaded.exteriorTemplates.find((template) => template.id === 'ext-east-office')?.side).toBe('east')
+  })
+
+  it('loadSave backfills floor heights and explicit exterior keys for older saves', async () => {
+    const project = createSeedProject()
+    project.id = 'project-1'
+    project.name = 'Planner Test'
+
+    firestoreState.docs['projects/project-1'] = {
+      id: 'project-1',
+      name: 'Planner Test',
+      archived: false,
+      createdBy: 'user-1',
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+      defaultSaveId: 'save-default',
+      lastOpenedSaveId: 'save-default',
+    }
+    firestoreState.docs['projects/project-1/saves/save-default'] = {
+      id: 'save-default',
+      name: 'Default Save',
+      archived: false,
+      isDefault: true,
+      parentSaveId: null,
+      sourceProjectId: null,
+      createdBy: 'user-1',
+      schemaVersion: project.schemaVersion,
+      units: project.units,
+      gridUnit: project.gridUnit,
+      gridSpacing: project.gridSpacing,
+      plotBoundary: project.plotBoundary,
+      buildingBoundary: project.buildingBoundary,
+      fixedStructures: project.fixedStructures,
+      createdAt: project.createdAt,
+      updatedAt: project.updatedAt,
+    }
+    project.floors.forEach((floor) => {
+      const legacyFloor = clone(floor) as unknown as Record<string, unknown>
+      delete legacyFloor.heightMeters
+      delete legacyFloor.exterior
+      firestoreState.docs[`projects/project-1/saves/save-default/floors/${floor.id}`] = legacyFloor
+    })
+    project.templates.forEach((template) => {
+      firestoreState.docs[`projects/project-1/saves/save-default/templates/${template.id}`] = clone(template) as unknown as Record<string, unknown>
+    })
+
+    const { loadSave } = await import('./plannerRepository')
+    const loaded = await loadSave('project-1', 'save-default', 'user-1')
+
+    expect(loaded.floors[0]?.heightMeters).toBe(3.5)
+    expect(loaded.floors[0]?.exterior).toEqual({
+      east: null,
+      west: null,
+      north: null,
+      south: null,
+    })
   })
 
   it('archiveProject mirrors the archive state onto every user membership record', async () => {

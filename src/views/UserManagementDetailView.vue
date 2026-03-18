@@ -148,6 +148,9 @@ watch(() => route.params.userId, () => {
             </p>
           </div>
           <div class="button-row">
+            <button class="button button--ghost" @click="router.push({ name: 'projects' })">
+              Back to dashboard
+            </button>
             <button class="button button--ghost" @click="router.push({ name: 'admin-users' })">
               Back to users
             </button>

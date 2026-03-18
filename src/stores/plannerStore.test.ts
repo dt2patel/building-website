@@ -9,6 +9,15 @@ vi.mock('../services/firebase', () => ({
   isFirebaseConfigured: () => true,
 }))
 
+const exportMocks = vi.hoisted(() => ({
+  downloadBlob: vi.fn(),
+  exportFloorPdf: vi.fn(async () => new Blob()),
+  exportProjectJsonBlob: vi.fn((project: Project) => new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' })),
+  projectJsonFilename: vi.fn((project: Project, saveId: string) => `${project.id}-${saveId}.json`),
+}))
+
+vi.mock('../lib/export', () => exportMocks)
+
 function createMockProject() {
   const project = createSeedProject()
   project.id = 'project-1'
@@ -83,6 +92,10 @@ describe('plannerStore workflow coverage', () => {
     vi.setSystemTime(new Date('2026-03-14T00:00:00.000Z'))
     repositoryState.remoteProject = createMockProject()
     repositoryState.localProject = null
+    exportMocks.downloadBlob.mockClear()
+    exportMocks.exportFloorPdf.mockClear()
+    exportMocks.exportProjectJsonBlob.mockClear()
+    exportMocks.projectJsonFilename.mockClear()
 
     const auth = useAuthStore()
     auth.profile = {
@@ -235,5 +248,16 @@ describe('plannerStore workflow coverage', () => {
       ?.entities.find((entity) => entity.id === 'panel-main')
 
     expect(movedPoint?.vertices[0]?.x).toBe(9.4)
+  })
+
+  it('downloads the current project as JSON for seed data export', async () => {
+    const store = await initializeStore()
+
+    store.exportProjectJson()
+
+    expect(exportMocks.exportProjectJsonBlob).toHaveBeenCalledWith(store.project)
+    expect(exportMocks.projectJsonFilename).toHaveBeenCalledWith(store.project, 'save-default')
+    expect(exportMocks.downloadBlob).toHaveBeenCalledWith(expect.any(Blob), 'project-1-save-default.json')
+    expect(store.statusMessage).toBe('Project JSON downloaded locally')
   })
 })

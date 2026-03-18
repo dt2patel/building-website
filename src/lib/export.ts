@@ -2,6 +2,15 @@ import { jsPDF } from 'jspdf'
 import { svg2pdf } from 'svg2pdf.js'
 import type { Floor, LayerType, Project } from '../types/planner'
 
+export function downloadBlob(blob: Blob, filename: string) {
+  const downloadUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = downloadUrl
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(downloadUrl)
+}
+
 export async function exportFloorPdf(options: {
   svg: SVGSVGElement
   project: Project
@@ -38,4 +47,14 @@ export async function exportFloorPdf(options: {
   })
 
   return pdf.output('blob')
+}
+
+export function exportProjectJsonBlob(project: Project): Blob {
+  return new Blob([`${JSON.stringify(project, null, 2)}\n`], {
+    type: 'application/json',
+  })
+}
+
+export function projectJsonFilename(project: Project, saveId: string): string {
+  return `${project.id}-${saveId}.json`
 }

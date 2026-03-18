@@ -79,6 +79,11 @@ service cloud.firestore {
           allow create, update, delete: if canEditProject(projectId) || isAdmin();
         }
 
+        match /exteriorTemplates/{templateId} {
+          allow read: if isProjectMember(projectId) || isAdmin();
+          allow create, update, delete: if canEditProject(projectId) || isAdmin();
+        }
+
         match /exports/{exportId} {
           allow read: if isProjectMember(projectId) || isAdmin();
           allow create, update, delete: if canEditProject(projectId) || isAdmin();

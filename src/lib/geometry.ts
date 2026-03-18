@@ -1,4 +1,4 @@
-import type { GridPoint, MeasurementUnit, PlanEntity } from '../types/planner'
+import type { CardinalSide, GridPoint, MeasurementUnit, PlanEntity } from '../types/planner'
 
 export function gridSpacingInMeters(spacing: number, unit: MeasurementUnit): number {
   return unit === 'm' ? spacing : spacing / 100
@@ -78,4 +78,31 @@ export function toDisplayValue(valueInMeters: number, unit: MeasurementUnit): nu
 
 export function fromDisplayValue(value: number, unit: MeasurementUnit): number {
   return unit === 'cm' ? value / 100 : value
+}
+
+export function clampToRange(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
+}
+
+export function isCloseTo(value: number, target: number, epsilon = 0.05): boolean {
+  return Math.abs(value - target) <= epsilon
+}
+
+export function distanceBetweenPoints(start: GridPoint, end: GridPoint): number {
+  return Math.hypot(end.x - start.x, end.y - start.y)
+}
+
+export function projectPointToSide(
+  point: GridPoint,
+  bounds: ReturnType<typeof getBounds>,
+  side: CardinalSide,
+): number {
+  switch (side) {
+    case 'east':
+    case 'west':
+      return point.y - bounds.minY
+    case 'north':
+    case 'south':
+      return point.x - bounds.minX
+  }
 }

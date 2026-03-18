@@ -51,6 +51,16 @@ function openProject(projectId: string, saveId: string) {
   })
 }
 
+function openExteriorProject(projectId: string, saveId: string) {
+  void router.push({
+    name: 'project-exterior-editor',
+    params: {
+      projectId,
+      saveId,
+    },
+  })
+}
+
 async function createProjectFromForm() {
   const name = newProjectName.value.trim()
   if (!name) {
@@ -224,6 +234,12 @@ async function logout() {
                   <div class="button-row">
                     <button class="button button--ghost" @click="openProject(project.id, project.lastOpenedSaveId || project.defaultSaveId)">
                       Open
+                    </button>
+                    <button
+                      class="button button--ghost"
+                      @click="openExteriorProject(project.id, project.defaultSaveId)"
+                    >
+                      Exterior
                     </button>
                     <button
                       class="button button--ghost"

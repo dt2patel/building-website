@@ -5,6 +5,7 @@ import ProjectsDashboardView from '../views/ProjectsDashboardView.vue'
 import ArchivedProjectsView from '../views/ArchivedProjectsView.vue'
 import UserManagementListView from '../views/UserManagementListView.vue'
 import UserManagementDetailView from '../views/UserManagementDetailView.vue'
+import ProjectExteriorEditorView from '../views/ProjectExteriorEditorView.vue'
 import { pinia } from '../stores'
 import { useAuthStore } from '../stores/authStore'
 
@@ -48,6 +49,12 @@ const router = createRouter({
       path: '/projects/:projectId/saves/:saveId',
       name: 'project-editor',
       component: ProjectEditorView,
+      props: true,
+    },
+    {
+      path: '/projects/:projectId/exterior/:saveId',
+      name: 'project-exterior-editor',
+      component: ProjectExteriorEditorView,
       props: true,
     },
   ],

@@ -1,6 +1,11 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
-import { exportFloorPdf } from '../lib/export'
+import {
+  downloadBlob,
+  exportFloorPdf,
+  exportProjectJsonBlob,
+  projectJsonFilename,
+} from '../lib/export'
 import {
   createDefaultEntityStyle,
   entityLabel,
@@ -614,12 +619,7 @@ export const usePlannerStore = defineStore('planner', () => {
       visibleLayers,
     })
 
-    const downloadUrl = URL.createObjectURL(blob)
-    const anchor = document.createElement('a')
-    anchor.href = downloadUrl
-    anchor.download = `${project.value.id}-${activeSaveId.value}-${floor.id}.pdf`
-    anchor.click()
-    URL.revokeObjectURL(downloadUrl)
+    downloadBlob(blob, `${project.value.id}-${activeSaveId.value}-${floor.id}.pdf`)
 
     try {
       await uploadExport(project.value, floor.id, visibleLayers, activeSaveId.value)
@@ -627,6 +627,16 @@ export const usePlannerStore = defineStore('planner', () => {
     } catch (error) {
       statusMessage.value = error instanceof Error ? error.message : 'Export logging failed'
     }
+  }
+
+  function exportProjectJson() {
+    if (!project.value) {
+      return
+    }
+
+    const blob = exportProjectJsonBlob(project.value)
+    downloadBlob(blob, projectJsonFilename(project.value, activeSaveId.value))
+    statusMessage.value = 'Project JSON downloaded locally'
   }
 
   const draftStyle = computed(() => {
@@ -657,6 +667,7 @@ export const usePlannerStore = defineStore('planner', () => {
     draftVertices,
     editableMembership,
     exportActiveFloor,
+    exportProjectJson,
     initialize,
     initialized,
     layerVisibility,

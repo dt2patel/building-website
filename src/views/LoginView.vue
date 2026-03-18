@@ -6,8 +6,8 @@ import { useAuthStore } from '../stores/authStore'
 
 const auth = useAuthStore()
 const router = useRouter()
-const username = ref('aditya')
-const password = ref('greatest')
+const username = ref('')
+const password = ref('')
 
 async function submit() {
   try {
@@ -27,7 +27,7 @@ async function submit() {
           <p class="eyebrow">Blueprint Planner</p>
           <h1>Sign In</h1>
           <p class="muted auth-copy">
-            Use the seeded credentials to get started. `aditya / greatest` is the default admin account.
+            Use your project credentials to sign in.
           </p>
 
           <label class="field">

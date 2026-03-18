@@ -2,12 +2,20 @@
 import { IonContent, IonPage, onIonViewWillEnter, onIonViewWillLeave } from '@ionic/vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import EditorCanvas from '../components/planner/EditorCanvas.vue'
+import DesignCanvas from '../components/canvas/DesignCanvas.vue'
+import type { CanvasEntityPresentation, ViewBoxGeometry } from '../components/canvas/designCanvas'
 import InspectorPanel from '../components/planner/InspectorPanel.vue'
-import { toDisplayValue } from '../lib/geometry'
+import {
+  entityCenter,
+  getBounds,
+  pointsToPath,
+  snapToGrid,
+  toDisplayValue,
+} from '../lib/geometry'
 import { useAuthStore } from '../stores/authStore'
 import { usePlannerStore } from '../stores/plannerStore'
 import { useProjectsStore } from '../stores/projectsStore'
+import type { GridPoint } from '../types/planner'
 import { layerLabels, layerOrder, type MeasurementUnit, type ToolMode } from '../types/planner'
 
 const auth = useAuthStore()
@@ -15,11 +23,17 @@ const planner = usePlannerStore()
 const projectsStore = useProjectsStore()
 const route = useRoute()
 const router = useRouter()
-const editorCanvas = ref<InstanceType<typeof EditorCanvas> | null>(null)
+const editorCanvas = ref<InstanceType<typeof DesignCanvas> | null>(null)
 const toolModes: ToolMode[] = ['select', 'point', 'polyline', 'polygon']
 const saveAsName = ref('')
 const navigationPending = ref(false)
 let keydownListenerAttached = false
+const fallbackPlot = [
+  { x: 0, y: 0 },
+  { x: 40, y: 0 },
+  { x: 40, y: 72 },
+  { x: 0, y: 72 },
+]
 
 const projectAccess = computed(() =>
   [...projectsStore.projects, ...projectsStore.archivedProjects]
@@ -29,6 +43,81 @@ const projectAccess = computed(() =>
 const activeLayerTemplates = computed(
   () => planner.templatesByLayer[planner.activeLayerType],
 )
+
+const plotBounds = computed(() => getBounds(planner.project?.plotBoundary ?? fallbackPlot))
+const viewBoxGeometry = computed<ViewBoxGeometry>(() => {
+  const bounds = plotBounds.value
+  const width = bounds.maxX - bounds.minX
+  const height = bounds.maxY - bounds.minY
+  const margin = Math.max(width, height) * 0.1
+
+  return {
+    minX: bounds.minX - margin,
+    minY: bounds.minY - margin,
+    width: width + margin * 2,
+    height: height + margin * 2,
+  }
+})
+
+const floorGrid = computed(() =>
+  planner.project
+    ? {
+        spacing: planner.project.gridSpacing,
+        unit: planner.project.gridUnit,
+        rect: {
+          x: viewBoxGeometry.value.minX,
+          y: viewBoxGeometry.value.minY,
+          width: viewBoxGeometry.value.width,
+          height: viewBoxGeometry.value.height,
+        },
+      }
+    : undefined,
+)
+
+const plotPath = computed(() => pointsToPath(planner.project?.plotBoundary ?? fallbackPlot, true))
+const compass = computed(() => {
+  const bounds = plotBounds.value
+  return {
+    north: { x: (bounds.minX + bounds.maxX) / 2, y: bounds.minY - 2.8 },
+    south: { x: (bounds.minX + bounds.maxX) / 2, y: bounds.maxY + 3.6 },
+    west: { x: bounds.minX - 2.5, y: (bounds.minY + bounds.maxY) / 2 },
+    east: { x: bounds.maxX + 2.5, y: (bounds.minY + bounds.maxY) / 2 },
+  }
+})
+
+const canvasEntities = computed<CanvasEntityPresentation[]>(() =>
+  planner.visibleTemplates.flatMap((template) =>
+    template.entities.map((entity) => ({
+      entity,
+      selectionLayerType: template.layerType,
+      dimmed: template.layerType !== planner.activeLayerType,
+      showLabel: template.layerType === 'perimeter' || planner.selectedEntityId === entity.id,
+      labelClass: {
+        'entity-label--active': template.layerType === planner.activeLayerType,
+      },
+    })),
+  ),
+)
+
+function floorScreenToWorld(
+  event: PointerEvent | MouseEvent,
+  svg: SVGSVGElement,
+  geometry: ViewBoxGeometry,
+): GridPoint | null {
+  if (!planner.project) {
+    return null
+  }
+
+  const rect = svg.getBoundingClientRect()
+  const rawX = ((event.clientX - rect.left) / rect.width) * geometry.width + geometry.minX
+  const rawY = ((event.clientY - rect.top) / rect.height) * geometry.height + geometry.minY
+
+  return snapToGrid({ x: rawX, y: rawY }, planner.project.gridSpacing, planner.project.gridUnit)
+}
+
+function identityWorldToSvg(point: GridPoint): GridPoint {
+  return point
+}
 
 function plotVertexValue(index: number, axis: 'x' | 'y') {
   const vertex = planner.project?.plotBoundary[index]
@@ -74,6 +163,10 @@ async function exportCurrentFloor() {
   }
 
   await planner.exportActiveFloor(svg)
+}
+
+function exportCurrentProjectJson() {
+  planner.exportProjectJson()
 }
 
 function handleGlobalKeydown(event: KeyboardEvent) {
@@ -245,6 +338,12 @@ onBeforeUnmount(() => {
 
             <div class="button-row button-row--wrap">
               <button class="button button--ghost" @click="router.push({ name: 'projects' })">Dashboard</button>
+              <button
+                class="button button--ghost"
+                @click="router.push({ name: 'project-exterior-editor', params: { projectId: route.params.projectId, saveId: route.params.saveId } })"
+              >
+                Exterior planner
+              </button>
               <button
                 class="button button--ghost"
                 :disabled="!projectAccess?.canEdit || !planner.projectMeta || projectsStore.cloningProjectIds[planner.projectMeta.id] || navigationPending"
@@ -498,27 +597,56 @@ onBeforeUnmount(() => {
               <p v-if="!planner.canEdit" class="toolbar__notice">
                 {{ projectAccess?.canEdit ? 'Editing is unavailable right now.' : 'You have view-only access.' }}
               </p>
+              <button class="button button--ghost" @click="exportCurrentProjectJson">Export JSON</button>
               <button class="button button--ghost" @click="planner.persist()">Sync now</button>
               <button class="button button--primary" @click="exportCurrentFloor">Export PDF</button>
             </div>
           </div>
 
-          <EditorCanvas
+          <DesignCanvas
             ref="editorCanvas"
-            :active-layer-type="planner.activeLayerType"
+            header-eyebrow="Live floor canvas"
+            :header-title="planner.selectedFloor?.name ?? 'No floor selected'"
+            :header-hint="planner.project ? `Plot on a snapped ${planner.project.gridSpacing} ${planner.project.gridUnit} grid with plot-based coordinates.` : undefined"
+            readonly-hint="Canvas editing is locked until Firestore confirms a live server connection."
+            hover-empty-label="Hover the plot to inspect coordinates"
             :draft-style="planner.draftStyle"
             :draft-vertices="planner.draftVertices"
-            :floor="planner.selectedFloor"
-            :project="planner.project"
+            :view-box-geometry="viewBoxGeometry"
+            :grid="floorGrid"
+            :entities="canvasEntities"
             :selected-entity-id="planner.selectedEntityId"
             :tool-mode="planner.toolMode"
-            :visible-templates="planner.visibleTemplates"
             :editable="planner.canEdit"
+            :screen-to-world="floorScreenToWorld"
+            :world-to-svg="identityWorldToSvg"
             @add-vertex="planner.addVertexToDraft"
             @select-entity="planner.selectEntity"
             @translate-entity="planner.translateEntity"
             @update-vertex="planner.updateVertex"
-          />
+          >
+            <template #underlay>
+              <path :d="plotPath" class="boundary boundary--plot" />
+
+              <text class="compass-label" :x="compass.north.x" :y="compass.north.y">N</text>
+              <text class="compass-label" :x="compass.south.x" :y="compass.south.y">S</text>
+              <text class="compass-label" :x="compass.west.x" :y="compass.west.y">W</text>
+              <text class="compass-label" :x="compass.east.x" :y="compass.east.y">E</text>
+
+              <g v-if="planner.project" class="fixed-shell">
+                <template v-for="structure in planner.project.fixedStructures" :key="structure.id">
+                  <path :d="pointsToPath(structure.vertices, true)" class="fixed-structure" />
+                  <text
+                    class="entity-label entity-label--fixed"
+                    :x="entityCenter(structure).x"
+                    :y="entityCenter(structure).y"
+                  >
+                    {{ structure.label }}
+                  </text>
+                </template>
+              </g>
+            </template>
+          </DesignCanvas>
         </section>
 
         <div class="inspector-shell">

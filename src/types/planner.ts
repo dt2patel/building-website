@@ -14,6 +14,7 @@ export type FloorType = 'garage' | 'office' | 'residential'
 export type SyncState = 'local' | 'syncing' | 'synced' | 'error'
 export type MeasurementUnit = 'm' | 'cm'
 export type UserRole = 'admin' | 'user'
+export type CardinalSide = 'east' | 'west' | 'north' | 'south'
 
 export interface GridPoint {
   x: number
@@ -50,12 +51,32 @@ export interface Template {
   updatedAt: string
 }
 
+export interface ExteriorTemplate {
+  id: string
+  name: string
+  side: CardinalSide
+  heightMeters: number
+  version: number
+  status: 'active' | 'draft'
+  entities: PlanEntity[]
+  updatedAt: string
+}
+
+export interface ExteriorAssignments {
+  east: string | null
+  west: string | null
+  north: string | null
+  south: string | null
+}
+
 export interface Floor {
   id: string
   name: string
   index: number
   floorType: FloorType
+  heightMeters: number
   templateAssignments: Record<LayerType, string | null>
+  exterior: ExteriorAssignments
 }
 
 export interface ProjectState {
@@ -68,6 +89,7 @@ export interface ProjectState {
   fixedStructures: PlanEntity[]
   floors: Floor[]
   templates: Template[]
+  exteriorTemplates: ExteriorTemplate[]
   createdAt: string
   updatedAt: string
 }
@@ -89,7 +111,7 @@ export interface ProjectMeta {
   migrationVersion?: number
 }
 
-export interface ProjectSaveRecord extends Omit<ProjectState, 'floors' | 'templates'> {
+export interface ProjectSaveRecord extends Omit<ProjectState, 'floors' | 'templates' | 'exteriorTemplates'> {
   id: string
   name: string
   archived: boolean
@@ -177,5 +199,51 @@ export function createEmptyAssignments(): Record<LayerType, string | null> {
     fireSafety: null,
     electrical: null,
     custom: null,
+  }
+}
+
+export function createEmptyExteriorAssignments(): ExteriorAssignments {
+  return {
+    east: null,
+    west: null,
+    north: null,
+    south: null,
+  }
+}
+
+export function getExteriorAssignment(
+  exterior: ExteriorAssignments,
+  side: CardinalSide,
+): string | null {
+  switch (side) {
+    case 'east':
+      return exterior.east
+    case 'west':
+      return exterior.west
+    case 'north':
+      return exterior.north
+    case 'south':
+      return exterior.south
+  }
+}
+
+export function setExteriorAssignment(
+  exterior: ExteriorAssignments,
+  side: CardinalSide,
+  templateId: string | null,
+) {
+  switch (side) {
+    case 'east':
+      exterior.east = templateId
+      return
+    case 'west':
+      exterior.west = templateId
+      return
+    case 'north':
+      exterior.north = templateId
+      return
+    case 'south':
+      exterior.south = templateId
+      return
   }
 }
