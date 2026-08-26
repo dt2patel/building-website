@@ -453,6 +453,10 @@ textarea:disabled {
   font-size: 0.82rem;
 }
 
+.toolbar__notice--inline {
+  margin-left: 4px;
+}
+
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -706,19 +710,148 @@ textarea:disabled {
 
 .whole-building {
   flex: 1;
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   border-radius: 18px;
   border: 1px solid rgba(66, 86, 107, 0.18);
   background:
     radial-gradient(circle at top left, rgba(15, 118, 110, 0.08), transparent 18%),
     linear-gradient(180deg, #fcfbf7 0%, #f4efe4 100%);
-  padding: 16px;
+  padding: 14px;
+}
+
+.whole-building__viewport {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-radius: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.95), rgba(248, 245, 237, 0.92)),
+    #fffdf8;
+  border: 1px solid rgba(215, 209, 194, 0.86);
 }
 
 .whole-building__canvas {
+  display: block;
+}
+
+.whole-building__legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px 14px;
+}
+
+.whole-building__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--planner-muted);
+  font-size: 0.82rem;
+}
+
+.whole-building__legend-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(22, 33, 43, 0.16);
+}
+
+.whole-building__legend-swatch--geometry {
+  background: rgba(29, 78, 216, 0.1);
+}
+
+.whole-building__legend-swatch--guide {
+  background: linear-gradient(180deg, rgba(29, 78, 216, 0.14), rgba(202, 138, 4, 0.14));
+ }
+
+.whole-building__legend-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: rgba(107, 114, 128, 0.12);
+  color: var(--planner-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.whole-building__band,
+.whole-building__shape,
+.whole-building__point,
+.whole-building__point-cross {
+  vector-effect: non-scaling-stroke;
+}
+
+.whole-building__guide-line {
+  vector-effect: non-scaling-stroke;
+}
+
+.whole-building__guide-label,
+.whole-building__entity-label,
+.whole-building__floor-name,
+.whole-building__floor-meta,
+.whole-building__badge-text {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.whole-building__floor-name {
+  fill: #16212b;
+  font-size: 0.34px;
+  font-weight: 600;
+}
+
+.whole-building__floor-meta {
+  fill: rgba(75, 85, 99, 0.92);
+  font-size: 0.24px;
+}
+
+.whole-building__badge-text {
+  fill: rgba(75, 85, 99, 0.96);
+  font-size: 0.19px;
+  font-weight: 600;
+}
+
+.whole-building__guide-label {
+  font-size: 0.24px;
+}
+
+.whole-building__entity-label {
+  fill: #16212b;
+  font-size: 0.22px;
+}
+
+.whole-building__floor-hit {
+  fill: transparent;
+  cursor: pointer;
+}
+
+.review-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 14px 0 16px;
+}
+
+.review-summary__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(239, 232, 216, 0.44);
+}
+
+.review-summary__label {
+  color: var(--planner-muted);
+  font-size: 0.84rem;
+}
+
+.review-summary__action {
   width: 100%;
-  height: 100%;
-  min-height: 0;
 }
 
 .compass-label {

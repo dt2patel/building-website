@@ -109,11 +109,20 @@ export const useExteriorPlannerStore = defineStore('exteriorPlanner', () => {
       return []
     }
 
-    return project.value.floors.map((floor) => ({
-      floor,
-      bottomOffset: floorBottomOffset(project.value!, floor.id),
-      template: getAssignedExteriorTemplate(project.value!, floor, selectedSide.value),
-    }))
+    return project.value.floors.map((floor) => {
+      const projection = projectFloorFacadeGuides(project.value!, floor, selectedSide.value)
+      const template = getAssignedExteriorTemplate(project.value!, floor, selectedSide.value)
+
+      return {
+        floor,
+        bottomOffset: floorBottomOffset(project.value!, floor.id),
+        projection,
+        template,
+        isAssigned: Boolean(template),
+        entityCount: template?.entities.length ?? 0,
+        guideCount: projection.guides.length,
+      }
+    })
   })
 
   const buildingHeight = computed(() => (project.value ? stackedElevationHeight(project.value) : 0))

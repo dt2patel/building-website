@@ -147,6 +147,19 @@ describe('exteriorPlannerStore', () => {
     expect(store.currentTemplate?.entities).toHaveLength(1)
   })
 
+  it('builds stacked floor projections for the selected side', async () => {
+    const store = await initializeStore()
+
+    store.selectSide('north')
+
+    expect(store.stackedFloors).toHaveLength(store.project?.floors.length ?? 0)
+    expect(store.stackedFloors[0]?.projection.side).toBe('north')
+    expect(store.stackedFloors[0]?.projection.width).toBeGreaterThan(0)
+    expect(store.stackedFloors[0]?.isAssigned).toBe(false)
+    expect(store.stackedFloors[0]?.entityCount).toBe(0)
+    expect(store.stackedFloors[0]?.guideCount).toBeGreaterThan(0)
+  })
+
   it('flushes pending changes during cleanup so quick navigation still saves', async () => {
     const store = await initializeStore()
 

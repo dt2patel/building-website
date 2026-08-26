@@ -5,6 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import DesignCanvas from '../components/canvas/DesignCanvas.vue'
 import type { CanvasEntityPresentation, ViewBoxGeometry } from '../components/canvas/designCanvas'
 import ExteriorInspectorPanel from '../components/exterior/ExteriorInspectorPanel.vue'
+import WholeBuildingInspectorPanel from '../components/exterior/WholeBuildingInspectorPanel.vue'
 import WholeBuildingElevation from '../components/exterior/WholeBuildingElevation.vue'
 import { clampToRange, snapToGrid, toDisplayValue } from '../lib/geometry'
 import { useAuthStore } from '../stores/authStore'
@@ -20,9 +21,21 @@ const projectsStore = useProjectsStore()
 const route = useRoute()
 const router = useRouter()
 const toolModes: ToolMode[] = ['select', 'point', 'polyline', 'polygon']
+const buildingDensityModes = [
+  { id: 'clean', label: 'Clean' },
+  { id: 'balanced', label: 'Balanced' },
+  { id: 'full', label: 'Full' },
+] as const
 const sides: CardinalSide[] = ['east', 'west', 'north', 'south']
 let keydownListenerAttached = false
 const visibleGuideLayers = ref<LayerType[]>([])
+const buildingSelectedFloorId = ref<string | null>(null)
+const buildingHoveredFloorId = ref<string | null>(null)
+const buildingDensityMode = ref<(typeof buildingDensityModes)[number]['id']>('clean')
+const buildingShowGeometry = ref(true)
+const buildingShowGuides = ref(true)
+const buildingShowLabels = ref(true)
+const buildingAssignedOnly = ref(false)
 
 const projectAccess = computed(() =>
   [...projectsStore.projects, ...projectsStore.archivedProjects]
@@ -81,6 +94,18 @@ const visibleFacadeGuides = computed(() =>
   (exterior.facadeProjection?.guides ?? []).filter((guide) =>
     visibleGuideLayers.value.includes(guide.layerType),
   ),
+)
+
+const buildingVisibleFloors = computed(() =>
+  buildingAssignedOnly.value
+    ? exterior.stackedFloors.filter((item) => item.isAssigned)
+    : exterior.stackedFloors,
+)
+
+const buildingSelectedFloor = computed(() =>
+  buildingVisibleFloors.value.find((item) => item.floor.id === buildingSelectedFloorId.value) ??
+  buildingVisibleFloors.value.find((item) => item.floor.id === buildingHoveredFloorId.value) ??
+  null,
 )
 
 function exteriorScreenToWorld(
@@ -265,9 +290,58 @@ function updateFloorHeight(event: Event) {
   )
 }
 
-function openBuildingFloor(floorId: string) {
+function syncBuildingSelection() {
+  const visibleIds = new Set(buildingVisibleFloors.value.map((item) => item.floor.id))
+  if (buildingSelectedFloorId.value && visibleIds.has(buildingSelectedFloorId.value)) {
+    return
+  }
+
+  if (exterior.selectedFloorId && visibleIds.has(exterior.selectedFloorId)) {
+    buildingSelectedFloorId.value = exterior.selectedFloorId
+    return
+  }
+
+  buildingSelectedFloorId.value = buildingVisibleFloors.value[0]?.floor.id ?? null
+}
+
+function toggleBuildingOverlay(layer: 'geometry' | 'guides' | 'labels') {
+  if (layer === 'geometry') {
+    buildingShowGeometry.value = !buildingShowGeometry.value
+    return
+  }
+
+  if (layer === 'guides') {
+    buildingShowGuides.value = !buildingShowGuides.value
+    return
+  }
+
+  buildingShowLabels.value = !buildingShowLabels.value
+}
+
+function isBuildingOverlayEnabled(layer: 'geometry' | 'guides' | 'labels') {
+  if (layer === 'geometry') {
+    return buildingShowGeometry.value
+  }
+
+  if (layer === 'guides') {
+    return buildingShowGuides.value
+  }
+
+  return buildingShowLabels.value
+}
+
+function selectBuildingFloor(floorId: string) {
+  buildingSelectedFloorId.value = floorId
+}
+
+function hoverBuildingFloor(floorId: string | null) {
+  if (!buildingSelectedFloorId.value || floorId === null) {
+    buildingHoveredFloorId.value = floorId
+  }
+}
+
+function openFloorFromBuildingReview(floorId: string) {
   exterior.selectFloor(floorId)
-  exterior.setActiveView('floor')
 }
 
 onIonViewWillEnter(async () => {
@@ -292,6 +366,29 @@ watch(
   (layers) => {
     const retainedLayers = visibleGuideLayers.value.filter((layer) => layers.includes(layer))
     visibleGuideLayers.value = retainedLayers.length === layers.length ? retainedLayers : [...layers]
+  },
+  { immediate: true },
+)
+
+watch(
+  () => exterior.activeView,
+  (view, previousView) => {
+    if (view === 'building' && previousView !== 'building') {
+      syncBuildingSelection()
+      buildingHoveredFloorId.value = null
+    }
+  },
+)
+
+watch(
+  () => [
+    exterior.selectedFloorId,
+    exterior.selectedSide,
+    buildingAssignedOnly.value,
+    exterior.stackedFloors.map((item) => `${item.floor.id}:${item.isAssigned}`).join('|'),
+  ],
+  () => {
+    syncBuildingSelection()
   },
   { immediate: true },
 )
@@ -483,16 +580,32 @@ onBeforeUnmount(() => {
               >
                 Whole Building
               </button>
-              <button
-                v-for="tool in toolModes"
-                :key="tool"
-                class="tool-button"
-                :class="{ 'tool-button--active': exterior.toolMode === tool }"
-                :disabled="exterior.activeView !== 'floor' || (tool !== 'select' && !exterior.canEdit)"
-                @click="exterior.setToolMode(tool)"
-              >
-                {{ tool }}
-              </button>
+
+              <template v-if="exterior.activeView === 'floor'">
+                <button
+                  v-for="tool in toolModes"
+                  :key="tool"
+                  class="tool-button"
+                  :class="{ 'tool-button--active': exterior.toolMode === tool }"
+                  :disabled="tool !== 'select' && !exterior.canEdit"
+                  @click="exterior.setToolMode(tool)"
+                >
+                  {{ tool }}
+                </button>
+              </template>
+
+              <template v-else>
+                <span class="toolbar__notice toolbar__notice--inline">Density</span>
+                <button
+                  v-for="mode in buildingDensityModes"
+                  :key="mode.id"
+                  class="pill-button pill-button--compact"
+                  :class="{ 'pill-button--active': buildingDensityMode === mode.id }"
+                  @click="buildingDensityMode = mode.id"
+                >
+                  {{ mode.label }}
+                </button>
+              </template>
             </div>
 
             <div
@@ -515,6 +628,38 @@ onBeforeUnmount(() => {
                 @click="toggleGuideLayer(layerType)"
               >
                 {{ guideLayerLabel(layerType) }}
+              </button>
+            </div>
+
+            <div v-else class="toolbar__group toolbar__group--filters">
+              <span class="toolbar__notice">Review overlays</span>
+              <button
+                class="pill-button pill-button--compact"
+                :class="{ 'pill-button--active': isBuildingOverlayEnabled('geometry') }"
+                @click="toggleBuildingOverlay('geometry')"
+              >
+                Geometry
+              </button>
+              <button
+                class="pill-button pill-button--compact"
+                :class="{ 'pill-button--active': isBuildingOverlayEnabled('guides') }"
+                @click="toggleBuildingOverlay('guides')"
+              >
+                Guides
+              </button>
+              <button
+                class="pill-button pill-button--compact"
+                :class="{ 'pill-button--active': isBuildingOverlayEnabled('labels') }"
+                @click="toggleBuildingOverlay('labels')"
+              >
+                Labels
+              </button>
+              <button
+                class="pill-button pill-button--compact"
+                :class="{ 'pill-button--active': buildingAssignedOnly }"
+                @click="buildingAssignedOnly = !buildingAssignedOnly"
+              >
+                Assigned only
               </button>
             </div>
 
@@ -618,13 +763,21 @@ onBeforeUnmount(() => {
           <WholeBuildingElevation
             v-else
             :building-height="exterior.buildingHeight"
-            :floors="exterior.stackedFloors"
-            @open-floor="openBuildingFloor"
+            :floors="buildingVisibleFloors"
+            :selected-floor-id="buildingSelectedFloorId"
+            :hovered-floor-id="buildingHoveredFloorId"
+            :density-mode="buildingDensityMode"
+            :show-geometry="buildingShowGeometry"
+            :show-guides="buildingShowGuides"
+            :show-labels="buildingShowLabels"
+            @select-floor="selectBuildingFloor"
+            @hover-floor="hoverBuildingFloor"
           />
         </section>
 
         <div class="inspector-shell">
           <ExteriorInspectorPanel
+            v-if="exterior.activeView === 'floor'"
             :current-template="exterior.currentTemplate"
             :draft-vertices="exterior.draftVertices"
             :firebase-enabled="auth.firebaseEnabled"
@@ -639,6 +792,16 @@ onBeforeUnmount(() => {
             @delete-selected-entity="exterior.deleteSelectedEntity"
             @update-selected-entity="exterior.updateSelectedEntity"
             @update-selected-entity-vertex="(vertexIndex, axis, rawValue) => exterior.updateSelectedEntityVertex(vertexIndex, axis, rawValue, exterior.project?.gridUnit ?? 'm')"
+          />
+
+          <WholeBuildingInspectorPanel
+            v-else
+            :firebase-enabled="auth.firebaseEnabled"
+            :side-label="sideLabel(exterior.selectedSide)"
+            :status-message="exterior.statusMessage"
+            :sync-state="exterior.syncState"
+            :selected-floor="buildingSelectedFloor"
+            @open-floor="openFloorFromBuildingReview"
           />
         </div>
       </main>
